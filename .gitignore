@@ -34,3 +34,19 @@ Thumbs.db
 /.npm-cache/
 /.pip-cache/
 /.local-bin/
+
+# Local media, generated captions, transcripts, and runtime databases
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.mp3
+*.m4a
+*.wav
+*.ass
+transcript.json
+clips.json
+source_scan.json
+*.db
+*.sqlite
+*.sqlite3
