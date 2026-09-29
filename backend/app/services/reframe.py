@@ -874,6 +874,14 @@ def _crop_window(
     return x, y, crop_w_int, crop_h_int
 
 
+def _subtitle_filter(ass_path: Path) -> str:
+    """Build FFmpeg's subtitle filter with an explicit, escaped filename."""
+    # FFmpeg uses ':' to separate filter options. Keep the existing Windows
+    # drive-letter escaping and quote paths that may contain spaces.
+    ff_path = str(ass_path).replace("\\", "/").replace(":", "\\:")
+    return f"subtitles=filename='{ff_path}'"
+
+
 def _encode(
     clip_path: Path,
     track: np.ndarray,
@@ -895,15 +903,7 @@ def _encode(
         "-map", "0:v:0", "-map", "1:a:0?",
     ]
     if ass_path is not None:
-        # ffmpeg's filter parser uses `:` as the option separator within a
-        # filter, so a Windows path like `C:/Foo/bar.ass` makes ffmpeg think
-        # `C` is the filename and `/Foo/bar.ass` is the next option (it
-        # complains "Unable to parse original_size option value ..."). The
-        # standard fix is: forward-slash the path, backslash-escape the
-        # drive-letter colon, AND wrap the whole value in single quotes so
-        # ffmpeg parses it as one quoted filter-argument value.
-        ff_path = str(ass_path).replace("\\", "/").replace(":", "\\:")
-        cmd += ["-vf", f"subtitles='{ff_path}'"]
+        cmd += ["-vf", _subtitle_filter(ass_path)]
     cmd += [
         *plat.encoder_args(plat.H264_ENCODER, fast=False, bitrate_video="6M"),
         "-pix_fmt", "yuv420p",
@@ -984,10 +984,7 @@ def _encode_stage(
     ]
     final_label = "[composite]"
     if ass_path is not None:
-        # Same colon-escape trick as _encode: forward-slash path, escape the
-        # drive-letter colon if present, single-quote the whole filename.
-        ff_path = str(ass_path).replace("\\", "/").replace(":", "\\:")
-        parts.append(f"[composite]subtitles='{ff_path}'[v]")
+        parts.append(f"[composite]{_subtitle_filter(ass_path)}[v]")
         final_label = "[v]"
     filtergraph = ";".join(parts)
 
