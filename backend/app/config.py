@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     #   whispercli     -- our pre-built whisper.cpp Vulkan binary, subprocessed
     whisper_backend: str = "auto"
 
-    # Failed transcript spans use the normal local backend first, then this
-    # independently configured fallback. An empty model inherits WHISPER_MODEL.
+    # An explicit repair model selects this backend for repair. With an empty
+    # model, repair tries the normal backend first and this as its fallback.
     # Cached weights are required unless first-use download is explicitly enabled.
     transcript_repair_backend: str = "ctranslate2"
     transcript_repair_model: str = ""

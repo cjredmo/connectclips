@@ -146,7 +146,8 @@ def transcribe_span(source: Path, start: float, end: float, duration: float,
                     owned_seconds: float = OWNED_SECONDS,
                     context_seconds: float = CONTEXT_SECONDS,
                     transcribe_fn: Callable[[Path, str], list[dict]] | None = None,
-                    model_name: str | None = None) -> tuple[list[dict], dict]:
+                    model_name: str | None = None,
+                    retry_gaps: bool = True) -> tuple[list[dict], dict]:
     """Decode each owned window with context, retaining only owned words."""
     windows = owned_windows(start, end, duration, owned_seconds, context_seconds)
     words: list[dict] = []
@@ -177,7 +178,7 @@ def transcribe_span(source: Path, start: float, end: float, duration: float,
                 if (words and index > 0 and retained == 0 and
                         re.sub(r"\W+", "", words[-1]["word"].casefold()) ==
                         re.sub(r"\W+", "", text.casefold()) and
-                        word_start < words[-1]["end"] - 0.05 and
+                        word_start - words[-1]["end"] <= 0.15 and
                         abs(word_start - window["owned_start"]) < 0.5):
                     deduplicated += 1
                     continue
@@ -191,6 +192,34 @@ def transcribe_span(source: Path, start: float, end: float, duration: float,
         if worker:
             worker.close()
     words.sort(key=lambda w: (w["start"], w["end"]))
+    gap_retries = 0
+    gap_words_added = 0
+    if retry_gaps:
+        additions: list[dict] = []
+        long_gaps = [(previous, following) for previous, following in zip(words, words[1:])
+                     if following["start"] - previous["end"] > 3.0]
+        for index, (previous, following) in enumerate(long_gaps):
+            gap_retries += 1
+            # A fresh, short decode can recover speech that Whisper skipped
+            # inside a longer window. Keep only words wholly in the gap, and
+            # require a phrase so an isolated silence hallucination is ignored.
+            retry_words, _ = transcribe_span(
+                source, max(start, previous["end"] - 1.0),
+                min(end, following["start"] + 1.0), duration, backend,
+                owned_seconds=owned_seconds, context_seconds=context_seconds,
+                transcribe_fn=transcribe_fn, model_name=resolved_model,
+                retry_gaps=False,
+            )
+            interior = [word for word in retry_words
+                        if previous["end"] + 0.2 < word["start"] and
+                        word["end"] < following["start"] - 0.2]
+            if len(interior) >= 3 and not _has_word_loop(interior):
+                additions.extend(interior)
+                gap_words_added += len(interior)
+            if progress_cb:
+                progress_cb(f"Checking speech gap {index + 1}/{len(long_gaps)}", 1.0)
+        words.extend(additions)
+        words.sort(key=lambda w: (w["start"], w["end"]))
     # Whisper can assign an end past the next onset. Bound the new candidate's
     # end to that onset so stitched segments stay chronological.
     for current, following in zip(words, words[1:]):
@@ -198,6 +227,7 @@ def transcribe_span(source: Path, start: float, end: float, duration: float,
     words = [w for w in words if w["end"] > w["start"]]
     return words, {"windows": len(windows), "window_word_counts": counts,
                    "boundary_duplicates_removed": deduplicated,
+                   "gap_retries": gap_retries, "gap_words_added": gap_words_added,
                    "owned_seconds": owned_seconds, "context_seconds": context_seconds,
                    "no_previous_text_context": True, "model": resolved_model}
 
@@ -290,7 +320,7 @@ def validate_candidate(raw: dict, existing_repairs: list[dict], candidate: dict,
     previous_quality = analyze_transcript(previous_effective)
     previous_failed = sum(f["severity"] == "failed" for f in previous_quality["findings"])
     new_failed = sum(f["severity"] == "failed" for f in full_quality["findings"])
-    if new_failed >= previous_failed:
+    if (previous_failed and new_failed >= previous_failed) or (not previous_failed and new_failed):
         errors.append("full effective transcript is not materially healthier")
     before = [s for s in raw["segments"] if s["end"] <= start]
     after = [s for s in raw["segments"] if s["start"] >= end]
@@ -323,7 +353,8 @@ def _fallback_available() -> tuple[bool, str]:
 
 
 def repair_transcript(source: Path, transcript_path: Path,
-                      progress_cb: ProgressCB | None = None) -> dict:
+                      progress_cb: ProgressCB | None = None,
+                      recheck_accepted: bool = False) -> dict:
     """Attempt supported failed spans; never overwrite raw or a valid repair."""
     raw = json.loads(transcript_path.read_text(encoding="utf-8"))
     raw_quality = analyze_transcript(raw)
@@ -335,10 +366,21 @@ def repair_transcript(source: Path, transcript_path: Path,
         human_edits = transcript_edits._read_sidecar(transcript_edits.edits_path_for(transcript_path))
     except transcript_edits.EditError as exc:
         raise transcript_repairs.RepairError("human corrections require review") from exc
-    primary = transcribe._resolve_backend()
+    # An explicitly chosen repair model is an operator choice for repair only.
+    # Otherwise retain the normal-backend-first behavior and cached fallback.
+    configured_model = settings.transcript_repair_model.strip()
+    if configured_model:
+        available, reason = _fallback_available()
+        if not available:
+            raise transcript_repairs.RepairError(reason)
+        primary = settings.transcript_repair_backend
+        primary_model = configured_model
+    else:
+        primary = transcribe._resolve_backend()
+        primary_model = settings.whisper_model
     for finding in findings:
         status = transcript_repairs.transcript_status(transcript_path)
-        if not _same_failure_present(status["effective_quality"], finding):
+        if not recheck_accepted and not _same_failure_present(status["effective_quality"], finding):
             continue
         start, end = choose_span(raw, finding)
         conflicts = transcript_repairs.edit_conflicts(transcript_path, start, end)
@@ -351,7 +393,7 @@ def repair_transcript(source: Path, transcript_path: Path,
                 "conflicting_edit_ids": conflicts,
             })
             continue
-        attempts = [(primary, settings.whisper_model)]
+        attempts = [(primary, primary_model)]
         fallback_note = None
         for backend, model_name in attempts:
             repair_id = uuid.uuid4().hex

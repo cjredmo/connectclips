@@ -222,12 +222,44 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(meta["window_word_counts"], [1, 1])
         self.assertGreaterEqual(words[1]["start"], words[0]["end"])
 
+    def test_same_word_touching_owned_window_boundary_is_deduplicated(self):
+        decoded = [
+            [{"word": "again", "start": 9.7, "end": 10.0}],
+            [{"word": "again", "start": 5.0, "end": 5.3},
+             {"word": "next", "start": 5.4, "end": 5.8}],
+        ]
+        with patch.object(transcript_repair_runner, "_extract_audio"):
+            words, metadata = transcript_repair_runner.transcribe_span(
+                self.source, 0, 20, 20, "ctranslate2", owned_seconds=10,
+                context_seconds=5,
+                transcribe_fn=lambda _audio, _backend: decoded.pop(0),
+            )
+        self.assertEqual([word["word"] for word in words], ["again", "next"])
+        self.assertEqual(metadata["boundary_duplicates_removed"], 1)
+
+    def test_long_gap_retry_recovers_only_multiword_interior_speech(self):
+        original = [{"word": "before", "start": 1.0, "end": 2.0},
+                    {"word": "after", "start": 10.0, "end": 11.0}]
+        recovered = [{"word": "a", "start": 4.0, "end": 4.4},
+                     {"word": "spoken", "start": 4.5, "end": 5.2},
+                     {"word": "phrase", "start": 5.3, "end": 6.0}]
+        decoded = [original, recovered]
+        with patch.object(transcript_repair_runner, "_extract_audio"):
+            words, metadata = transcript_repair_runner.transcribe_span(
+                self.source, 0, 15, 15, "ctranslate2",
+                transcribe_fn=lambda _audio, _backend: decoded.pop(0),
+            )
+        self.assertEqual([word["word"] for word in words],
+                         ["before", "a", "spoken", "phrase", "after"])
+        self.assertEqual(metadata["gap_retries"], 1)
+        self.assertEqual(metadata["gap_words_added"], 3)
+
     def test_fallback_only_runs_after_primary_candidate_fails(self):
         good_words = [{"word": f"unique{i}", "start": float(i), "end": i + 0.8}
                       for i in range(3, 27)]
         with patch.object(transcript_repair_runner.transcribe, "_resolve_backend", return_value="whispercpp"), \
              patch.object(transcript_repair_runner.settings, "transcript_repair_backend", "ctranslate2"), \
-             patch.object(transcript_repair_runner.settings, "transcript_repair_model", "small.en"), \
+             patch.object(transcript_repair_runner.settings, "transcript_repair_model", ""), \
              patch.object(transcript_repair_runner, "_fallback_available", return_value=(True, "cached")), \
              patch.object(transcript_repair_runner, "transcribe_span",
                           side_effect=[([], {"window_word_counts": [0],
@@ -239,7 +271,7 @@ class RepairTests(unittest.TestCase):
         self.assertEqual([call.args[4] for call in run.call_args_list],
                          ["whispercpp", "ctranslate2"])
         self.assertEqual([call.kwargs["model_name"] for call in run.call_args_list],
-                         ["large-v3", "small.en"])
+                         ["large-v3", "large-v3"])
         self.assertEqual(status["effective_quality"]["status"], "clean")
         self.assertEqual([a["status"] for a in transcript_repairs.read_sidecar(self.path)["attempts"]],
                          ["failed", "accepted"])
@@ -259,6 +291,7 @@ class RepairTests(unittest.TestCase):
         good_words = [{"word": f"unique{i}", "start": float(i), "end": i + 0.8}
                       for i in range(3, 27)]
         with patch.object(transcript_repair_runner.transcribe, "_resolve_backend", return_value="whispercpp"), \
+             patch.object(transcript_repair_runner.settings, "transcript_repair_model", ""), \
              patch.object(transcript_repair_runner, "_fallback_available",
                           side_effect=AssertionError("fallback should not be checked")), \
              patch.object(transcript_repair_runner, "transcribe_span",
@@ -267,6 +300,43 @@ class RepairTests(unittest.TestCase):
             status = transcript_repair_runner.repair_transcript(self.source, self.path)
         self.assertEqual(run.call_count, 1)
         self.assertEqual(status["effective_quality"]["status"], "clean")
+
+    def test_recheck_accepted_revalidates_before_replacing(self):
+        first = self.activate()
+        good_words = [{"word": f"fresh{i}", "start": float(i), "end": i + 0.8}
+                      for i in range(3, 27)]
+        with patch.object(transcript_repair_runner.settings, "transcript_repair_backend", "ctranslate2"), \
+             patch.object(transcript_repair_runner.settings, "transcript_repair_model", "small.en"), \
+             patch.object(transcript_repair_runner, "_fallback_available", return_value=(True, "cached")), \
+             patch.object(transcript_repair_runner, "transcribe_span",
+                          return_value=(good_words, {"window_word_counts": [24],
+                                                    "boundary_duplicates_removed": 0})):
+            status = transcript_repair_runner.repair_transcript(
+                self.source, self.path, recheck_accepted=True)
+        data = transcript_repairs.read_sidecar(self.path)
+        self.assertEqual(status["effective_quality"]["status"], "clean")
+        self.assertEqual(len(data["repairs"]), 1)
+        self.assertNotEqual(data["repairs"][0]["id"], first["id"])
+        self.assertEqual([attempt["status"] for attempt in data["attempts"]],
+                         ["accepted", "accepted"])
+        self.assertEqual(self.path.read_bytes(), self.original_bytes)
+
+    def test_explicit_repair_model_skips_normal_backend(self):
+        good_words = [{"word": f"unique{i}", "start": float(i), "end": i + 0.8}
+                      for i in range(3, 27)]
+        with patch.object(transcript_repair_runner.settings, "transcript_repair_backend", "ctranslate2"), \
+             patch.object(transcript_repair_runner.settings, "transcript_repair_model", "small.en"), \
+             patch.object(transcript_repair_runner, "_fallback_available", return_value=(True, "cached")), \
+             patch.object(transcript_repair_runner.transcribe, "_resolve_backend",
+                          side_effect=AssertionError("normal backend must not start")), \
+             patch.object(transcript_repair_runner, "transcribe_span",
+                          return_value=(good_words, {"window_word_counts": [24],
+                                                    "boundary_duplicates_removed": 0})) as run:
+            status = transcript_repair_runner.repair_transcript(self.source, self.path)
+        self.assertEqual(status["effective_quality"]["status"], "clean")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[4], "ctranslate2")
+        self.assertEqual(run.call_args.kwargs["model_name"], "small.en")
 
     def test_normal_transcript_never_invokes_repair_backend(self):
         normal = {"source": "sample.mp4", "duration": 3,
