@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     #   whispercli     -- our pre-built whisper.cpp Vulkan binary, subprocessed
     whisper_backend: str = "auto"
 
+    # Failed transcript spans use the normal local backend first, then this
+    # independently configured fallback. An empty model inherits WHISPER_MODEL.
+    # Cached weights are required unless first-use download is explicitly enabled.
+    transcript_repair_backend: str = "ctranslate2"
+    transcript_repair_model: str = ""
+    transcript_repair_allow_model_download: bool = False
+
     # whispercli backend: path to the whisper-cli(.exe) binary and the dir
     # holding ggml-<model>.bin files. Empty = look on PATH for the binary
     # and ~/.cache/whisper.cpp/ for the models. install-windows.ps1 sets

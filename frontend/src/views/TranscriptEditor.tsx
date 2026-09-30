@@ -75,7 +75,8 @@ export function TranscriptEditor({ source, start, end, onChanged }: {
       <p className="muted small">Select a word, then extend the range if needed. Corrections change text; saved word timings stay the same until alignment. Admin mode is required to save.</p>
       {data?.warnings.map((warning, i) => <p className="error" key={i}>{warning}</p>)}
       {error && <p className="error">{error}</p>}
-      {data?.quality.status === 'failed' && <p className="error">Transcript quality check found a repeated-text anomaly. Review the transcript before using it.</p>}
+      {data && <p className="muted small">Raw transcription: {data.raw_quality.status}. Effective transcript: {data.effective_quality.status}.</p>}
+      {data?.repair.human_review_required && <p className="error">Transcript requires review before clip selection.</p>}
       <div className="transcript-segments">
         {data?.segments.map((segment) => (
           <p key={segment.id}>

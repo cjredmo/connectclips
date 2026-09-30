@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
-import type { Clip, ClipsFile, Job, Sermon } from '../types'
+import type { Clip, ClipsFile, Job, Sermon, TranscriptStatus } from '../types'
 
 type Props = {
   sermon: Sermon
@@ -71,6 +71,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const [clips, setClips] = useState<ClipsFile | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeJobs, setActiveJobs] = useState<Job[]>([])
+  const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [minClips, setMinClips] = useState(3)
   const [maxClips, setMaxClips] = useState(8)
@@ -106,6 +107,17 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
     }).catch(() => {})
     return () => { cancelled = true }
   }, [sermon.name])
+
+  useEffect(() => {
+    if (!sermon.transcribed) return
+    let cancelled = false
+    const refresh = () => api.getTranscriptStatus(sermon.name)
+      .then(status => { if (!cancelled) setTranscriptStatus(status) })
+      .catch(() => {})
+    refresh()
+    const timer = setInterval(refresh, 5000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [sermon.name, sermon.transcribed])
 
   const saveProgramUrl = async (raw: string) => {
     const trimmed = raw.trim()
@@ -154,10 +166,13 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const transcribeJob = recentJobsFor('transcribe')
   const selectJob = recentJobsFor('select_clips')
   const prescanJob = recentJobsFor('prescan_faces')
+  const repairJob = recentJobsFor('repair_transcript')
 
   const onTranscribe = () => api.startTranscribe(sermon.name).catch((e) => setError(String(e)))
   const onSelectClips = () =>
     api.startSelectClips(sermon.name, minClips, maxClips).catch((e) => setError(String(e)))
+  const onRepair = () => api.startRepairTranscript(sermon.name).catch((e) => setError(String(e)))
+  const transcriptBlocked = transcriptStatus?.human_review_required ?? false
   const onDelete = async () => {
     if (!window.confirm(`Delete "${sermon.name}"?\n\nThis removes the source file, transcript, clips.json, and every exported MP4.`)) return
     setDeleting(true)
@@ -239,6 +254,24 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
             </>
           )}
         </div>
+        {sermon.transcribed && transcriptStatus && (
+          <div className="step">
+            <div className="step-title">Transcript quality</div>
+            <span className="muted small">Raw: {transcriptStatus.raw_quality.status} · Effective: {transcriptStatus.effective_quality.status}</span>
+            {transcriptStatus.repair_exists && <span className="badge ok"> repaired</span>}
+            {transcriptBlocked && <span className="error-inline"> Transcript requires review</span>}
+            {transcriptStatus.repair_failure_reason && (
+              <span className="error-inline"> {transcriptStatus.repair_failure_reason}</span>
+            )}
+            {admin && transcriptStatus.raw_quality.status === 'failed' && transcriptBlocked && (
+              <button onClick={onRepair} disabled={runningKinds.has('repair_transcript')}>
+                {runningKinds.has('repair_transcript') ? 'Repairing transcript…' : 'Repair transcript'}
+              </button>
+            )}
+            <JobProgress job={repairJob} />
+            {repairJob?.status === 'failed' && <span className="error-inline">Transcript repair requires review</span>}
+          </div>
+        )}
         <div className="step">
           <div className="step-title">2. Pick clips</div>
           <div className="clip-count-controls">
@@ -267,7 +300,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
               <button
                 className="secondary"
                 onClick={onSelectClips}
-                disabled={runningKinds.has('select_clips')}
+                disabled={runningKinds.has('select_clips') || transcriptBlocked}
                 title="Re-run Claude clip selection with the range above"
               >
                 {runningKinds.has('select_clips') ? 'Re-running…' : 'Re-run'}
@@ -278,7 +311,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
             <>
               <button
                 onClick={onSelectClips}
-                disabled={!sermon.transcribed || runningKinds.has('select_clips')}
+                disabled={!sermon.transcribed || runningKinds.has('select_clips') || transcriptBlocked}
               >
                 {runningKinds.has('select_clips') ? 'Running…' : 'Run clip selection'}
               </button>

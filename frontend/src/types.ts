@@ -87,16 +87,17 @@ export type TranscriptWord = {
 
 export type RawTranscriptWord = { word: string; start: number; end: number }
 export type TranscriptSegment = {
-  id: number
+  id: number | string
   start: number
   end: number
   text: string
   words: RawTranscriptWord[]
   raw_words: RawTranscriptWord[]
+  reference_words?: RawTranscriptWord[]
 }
 export type TranscriptEdit = {
   id: string
-  segment_id: number
+  segment_id: number | string
   word_index: number
   original_words: RawTranscriptWord[]
   original_text: string
@@ -112,6 +113,21 @@ export type TranscriptResponse = {
   edits: TranscriptEdit[]
   warnings: string[]
   quality: { status: string; findings: unknown[] }
+  raw_quality: { status: string; findings: unknown[] }
+  effective_quality: { status: string; findings: unknown[] }
+  repair: Omit<TranscriptStatus, 'raw_quality' | 'effective_quality'>
+}
+
+export type TranscriptStatus = {
+  raw_quality: { status: string; findings: unknown[] }
+  effective_quality: { status: string; findings: unknown[] }
+  repair_exists: boolean
+  repair_status: string
+  repair_failure_reason: string | null
+  recent_repair_attempts: { status: string; backend?: string; failure_reason?: string }[]
+  repaired_ranges: { start: number; end: number; backend: string; model: string }[]
+  human_review_required: boolean
+  warnings: string[]
 }
 
 export type Me = {
@@ -179,7 +195,7 @@ export type UsageResponse = {
 
 export type Job = {
   id: string
-  kind: 'transcribe' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
+  kind: 'transcribe' | 'repair_transcript' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
   status: JobStatus
   source: string | null
   transcript_path: string | null

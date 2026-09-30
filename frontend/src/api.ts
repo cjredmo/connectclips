@@ -1,4 +1,4 @@
-import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptWord, UsageResponse } from './types'
+import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -116,8 +116,14 @@ export const api = {
     jsonFetch<TranscriptResponse>(
       `/sermons/${encodeURIComponent(source)}/transcript?start=${start}&end=${end}`,
     ),
+  getTranscriptStatus: (source: string) =>
+    jsonFetch<TranscriptStatus>(`/sermons/${encodeURIComponent(source)}/transcript-status`),
+  startRepairTranscript: (source: string) =>
+    jsonFetch<Job>('/jobs/repair-transcript', {
+      method: 'POST', body: JSON.stringify({ source }),
+    }),
   saveTranscriptEdit: (
-    source: string, body: { segment_id: number; word_index: number;
+    source: string, body: { segment_id: number | string; word_index: number;
       original_words: RawTranscriptWord[]; corrected_text: string }, editId?: string,
   ) => jsonFetch<TranscriptEdit>(
     `/sermons/${encodeURIComponent(source)}/transcript-edits${editId ? `/${encodeURIComponent(editId)}` : ''}`,

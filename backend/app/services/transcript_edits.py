@@ -102,23 +102,17 @@ def _validated_edits(raw: dict, edits: list[dict]) -> tuple[list[dict], list[str
             occupied.update(slots)
             valid.append(edit)
         except (EditError, TypeError, KeyError) as exc:
-            errors.append(str(exc))
+            edit_id = edit.get("id", "unknown") if isinstance(edit, dict) else "unknown"
+            errors.append(f"correction {edit_id} requires review: {exc}")
     return valid, errors
 
 
-def load_effective_transcript(transcript_path: Path) -> tuple[dict, list[dict], list[str]]:
-    """Return (effective transcript, valid edits, warnings) without writing raw data."""
-    raw = json.loads(transcript_path.read_text(encoding="utf-8"))
-    try:
-        edits = _read_sidecar(edits_path_for(transcript_path))
-    except EditError as exc:
-        return raw, [], [str(exc)]
-    valid, warnings = _validated_edits(raw, edits)
+def apply_edits_to_base(base: dict, edits: list[dict]) -> tuple[dict, list[dict], list[str]]:
+    """Apply human edits to the raw or repaired base without changing timing."""
+    valid, warnings = _validated_edits(base, edits)
     if not valid:
-        return raw, [], warnings
-    # JSON round trip ensures nested words and segment text in the raw object
-    # remain untouched while downstream consumers receive the edited copy.
-    effective = json.loads(json.dumps(raw))
+        return base, [], warnings
+    effective = json.loads(json.dumps(base))
     by_id = {s["id"]: s for s in effective.get("segments", [])}
     for edit in valid:
         seg = by_id[edit["segment_id"]]
@@ -132,6 +126,20 @@ def load_effective_transcript(transcript_path: Path) -> tuple[dict, list[dict], 
             continue
         seg["text"] = " ".join(w["word"] for w in seg.get("words", []) if w["word"])
     return effective, valid, warnings
+
+
+def load_effective_transcript(transcript_path: Path) -> tuple[dict, list[dict], list[str]]:
+    """Return raw -> accepted repairs -> human edits, plus edit warnings."""
+    raw = json.loads(transcript_path.read_text(encoding="utf-8"))
+    from app.services.transcript_repairs import load_repaired_base
+    base, _, repair_warnings = load_repaired_base(transcript_path, raw)
+    try:
+        edits = _read_sidecar(edits_path_for(transcript_path))
+    except EditError as exc:
+        return base, [], repair_warnings + [str(exc)]
+    effective, valid, warnings = apply_edits_to_base(base, edits)
+    # Stale edits stay in the sidecar and are reported, never discarded.
+    return effective, valid, repair_warnings + warnings
 
 
 def _atomic_write(path: Path, edits: list[dict]) -> None:
@@ -150,13 +158,17 @@ def _atomic_write(path: Path, edits: list[dict]) -> None:
             os.unlink(temp_name)
 
 
-def save_edit(transcript_path: Path, segment_id: int, word_index: int,
+def save_edit(transcript_path: Path, segment_id: int | str, word_index: int,
               original_words: list[dict], corrected_text: str, edit_id: str | None = None) -> dict:
     with _write_lock:
         raw = json.loads(transcript_path.read_text(encoding="utf-8"))
+        from app.services.transcript_repairs import load_repaired_base
+        base, _, repair_warnings = load_repaired_base(transcript_path, raw)
+        if repair_warnings:
+            raise EditError("transcript repair requires review before saving corrections")
         path = edits_path_for(transcript_path)
         edits = _read_sidecar(path)
-        _, errors = _validated_edits(raw, edits)
+        _, errors = _validated_edits(base, edits)
         if errors:
             raise EditError("existing transcript edits require review")
         existing = next((e for e in edits if e.get("id") == edit_id), None) if edit_id else None
@@ -176,10 +188,10 @@ def save_edit(transcript_path: Path, segment_id: int, word_index: int,
             "affected_end": original_words[-1]["end"] if original_words else None,
             "timing_needs_alignment": True,
         }
-        _locate(raw, proposed)
+        _locate(base, proposed)
         _replacement_slots(proposed["corrected_text"], len(original_words))
         updated = [e for e in edits if e.get("id") != edit_id] + [proposed]
-        _, errors = _validated_edits(raw, updated)
+        _, errors = _validated_edits(base, updated)
         if errors:
             raise EditError(errors[0])
         _atomic_write(path, updated)

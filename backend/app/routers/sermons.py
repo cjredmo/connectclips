@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.identity import get_user
 from app.routers.auth import require_admin
-from app.services import captions, clip_overrides, clip_selection, ingest, jobs, reframe, sermon_meta, transcript_edits, transcript_quality
+from app.services import captions, clip_overrides, clip_selection, ingest, jobs, reframe, sermon_meta, transcript_edits, transcript_repairs
 from app.services.transcribe import transcript_path_for
 
 
@@ -176,20 +176,34 @@ def get_transcript(name: str, start: float | None = None, end: float | None = No
     """Effective text and raw references for the correction UI."""
     path = _checked_transcript_path(name)
     raw = json.loads(path.read_text(encoding="utf-8"))
+    base, _, _ = transcript_repairs.load_repaired_base(path, raw)
     effective, edits, warnings = transcript_edits.load_effective_transcript(path)
     segments = []
-    for original, corrected in zip(raw.get("segments", []), effective.get("segments", [])):
+    base_by_id = {s["id"]: s for s in base.get("segments", [])}
+    for corrected in effective.get("segments", []):
         if start is not None and corrected["end"] <= start:
             continue
         if end is not None and corrected["start"] >= end:
             continue
-        segments.append({**corrected, "raw_words": original.get("words", [])})
+        reference_words = base_by_id[corrected["id"]].get("words", [])
+        segments.append({**corrected, "raw_words": reference_words,
+                         "reference_words": reference_words})
+    status = transcript_repairs.transcript_status(path)
     return {"source": name, "segments": segments, "edits": edits,
-            "warnings": warnings, "quality": transcript_quality.analyze_transcript(raw)}
+            "warnings": warnings, "quality": status["raw_quality"],
+            "raw_quality": status["raw_quality"],
+            "effective_quality": status["effective_quality"],
+            "repair": {key: value for key, value in status.items()
+                       if key not in ("raw_quality", "effective_quality")}}
+
+
+@router.get("/{name}/transcript-status")
+def get_transcript_status(name: str) -> dict:
+    return transcript_repairs.transcript_status(_checked_transcript_path(name))
 
 
 class TranscriptEditIn(BaseModel):
-    segment_id: int
+    segment_id: int | str
     word_index: int
     original_words: list[dict]
     corrected_text: str
