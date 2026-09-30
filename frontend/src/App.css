@@ -780,6 +780,9 @@ input[type="number"] {
   display: inline-block;
   transition: color 0.1s, transform 0.1s;
 }
+.cap-live .cp-word.future {
+  visibility: hidden; /* Keep its inline-block width in the centered chunk. */
+}
 .cap-live .cp-word.current {
   color: #ffd700;
   transform: scale(1.1);

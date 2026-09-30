@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
+import { captionWordState, currentWordIndex } from '../captionReveal'
 import type { Track, TranscriptWord } from '../types'
 
 type Props = {
@@ -272,10 +273,7 @@ export function LivePreview({
         : c[c.length - 1].end
       if (clipTime >= start && clipTime < end) {
         // Find the current word within the chunk
-        let wordIdx = 0
-        for (let j = 0; j < c.length; j++) {
-          if (clipTime >= c[j].start) wordIdx = j
-        }
+        const wordIdx = currentWordIndex(c, clipTime)
         return { chunk: c, wordIdx }
       }
     }
@@ -357,7 +355,7 @@ export function LivePreview({
             {currentChunk.chunk.map((w, i) => (
               <span
                 key={i}
-                className={`cp-word ${i === currentChunk.wordIdx ? 'current' : ''}`}
+                className={`cp-word ${captionWordState(i, currentChunk.wordIdx)}`}
               >
                 {/* NBSP, not a regular space: trailing whitespace inside an
                     `display: inline-block` box gets collapsed at the box
