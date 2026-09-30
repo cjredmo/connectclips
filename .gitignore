@@ -45,6 +45,7 @@ Thumbs.db
 *.wav
 *.ass
 transcript.json
+transcript_edits.json
 clips.json
 source_scan.json
 *.db

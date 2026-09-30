@@ -44,6 +44,7 @@ import numpy as np
 from app import platform as plat
 from app.config import settings
 from app.services import captions
+from app.services.transcript_edits import load_effective_transcript
 from app.services.yunet_ort import YuNetORT
 
 # (message, percent in [0, 1]) → None. Called from the export pipeline to
@@ -1060,7 +1061,7 @@ def export_clip(
         has_words = False
         words: list[captions.Word] = []
         if transcript_path is not None and transcript_path.is_file():
-            transcript = json.loads(transcript_path.read_text())
+            transcript, _, _ = load_effective_transcript(transcript_path)
             words = captions.words_in_range(transcript, start, end)
             has_words = bool(words)
         if has_words or hook_title:

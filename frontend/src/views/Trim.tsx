@@ -4,6 +4,7 @@ import type { Clip, Identity, Job, Sermon, ZoomLevel } from '../types'
 import { Publish } from './Publish'
 import { CaptionStylePicker } from './CaptionStylePicker'
 import { LivePreview } from './LivePreview'
+import { TranscriptEditor } from './TranscriptEditor'
 
 type Props = {
   sermon: Sermon
@@ -75,6 +76,8 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
   const [looping, setLooping] = useState(false)
   const [exportJob, setExportJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showTranscript, setShowTranscript] = useState(false)
+  const [transcriptRevision, setTranscriptRevision] = useState(0)
   const [styles, setStyles] = useState<{ key: string; label: string }[]>([])
   // Backend's default style key. Captured at captionStyles fetch time so the
   // Reset-to-suggestion handler can restore it after wiping overrides.
@@ -525,6 +528,7 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
             sermon={sermon.name}
             clipStart={start}
             clipEnd={end}
+            transcriptRevision={transcriptRevision}
             sourceVideoRef={videoRef}
             captionStyleKey={styleKey}
             captionMarginV={captionMarginV}
@@ -644,6 +648,14 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
           )}
         </div>
       </div>
+      <button type="button" className="secondary transcript-toggle"
+        onClick={() => setShowTranscript(value => !value)}>
+        {showTranscript ? 'Hide transcript corrections' : 'Correct transcript text'}
+      </button>
+      {showTranscript && <TranscriptEditor
+        source={sermon.name} start={start} end={end}
+        onChanged={() => setTranscriptRevision(value => value + 1)}
+      />}
     </div>
   )
 }

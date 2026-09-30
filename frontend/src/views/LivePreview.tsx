@@ -7,6 +7,7 @@ type Props = {
   sermon: string
   clipStart: number
   clipEnd: number
+  transcriptRevision?: number
   sourceVideoRef: React.RefObject<HTMLVideoElement | null>
   captionStyleKey: string
   captionMarginV: number | null
@@ -117,7 +118,7 @@ function hookLines(title: string): { lines: string[]; fontSize: number } {
 }
 
 export function LivePreview({
-  sermon, clipStart, clipEnd, sourceVideoRef,
+  sermon, clipStart, clipEnd, transcriptRevision, sourceVideoRef,
   captionStyleKey, captionMarginV, onCaptionMarginVChange,
   includeHookTitle, hookTitle, identityId, zoomLevel, lockCamera,
 }: Props) {
@@ -161,7 +162,7 @@ export function LivePreview({
       .then((r) => { if (!cancelled) setWords(r.words) })
       .catch(() => { if (!cancelled) setWords([]) })
     return () => { cancelled = true }
-  }, [sermon, clipStart, clipEnd])
+  }, [sermon, clipStart, clipEnd, transcriptRevision])
 
   // Frame loop driven by the source video. requestVideoFrameCallback fires per
   // decoded video frame (60Hz on this 60fps source) and also on seek, so the

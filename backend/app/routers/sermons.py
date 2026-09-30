@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.identity import get_user
 from app.routers.auth import require_admin
-from app.services import captions, clip_overrides, clip_selection, ingest, jobs, reframe, sermon_meta
+from app.services import captions, clip_overrides, clip_selection, ingest, jobs, reframe, sermon_meta, transcript_edits, transcript_quality
 from app.services.transcribe import transcript_path_for
 
 
@@ -148,10 +148,8 @@ def get_transcript_words(name: str, start: float = 0.0, end: float | None = None
     required. Word offsets in the response are CLIP-RELATIVE so the frontend
     can map them directly against the source video's currentTime - start.
     """
-    transcript_path = transcript_path_for(name)
-    if not transcript_path.is_file():
-        raise HTTPException(status_code=404, detail="transcript not found (run transcribe first)")
-    transcript = json.loads(transcript_path.read_text())
+    transcript_path = _checked_transcript_path(name)
+    transcript, _, _ = transcript_edits.load_effective_transcript(transcript_path)
     if end is None:
         end = float(transcript.get("duration") or 1e9)
     words = captions.words_in_range(transcript, start, end)
@@ -160,6 +158,70 @@ def get_transcript_words(name: str, start: float = 0.0, end: float | None = None
         "end": end,
         "words": [{"text": w.text, "start": w.start, "end": w.end} for w in words],
     }
+
+
+def _checked_transcript_path(name: str) -> Path:
+    if name in ("", ".", "..") or "/" in name or "\\" in name:
+        raise HTTPException(status_code=400, detail="invalid sermon name")
+    if not (settings.data_sources_dir / name).is_file():
+        raise HTTPException(status_code=404, detail="sermon not found")
+    path = transcript_path_for(name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="transcript not found (run transcribe first)")
+    return path
+
+
+@router.get("/{name}/transcript")
+def get_transcript(name: str, start: float | None = None, end: float | None = None) -> dict:
+    """Effective text and raw references for the correction UI."""
+    path = _checked_transcript_path(name)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    effective, edits, warnings = transcript_edits.load_effective_transcript(path)
+    segments = []
+    for original, corrected in zip(raw.get("segments", []), effective.get("segments", [])):
+        if start is not None and corrected["end"] <= start:
+            continue
+        if end is not None and corrected["start"] >= end:
+            continue
+        segments.append({**corrected, "raw_words": original.get("words", [])})
+    return {"source": name, "segments": segments, "edits": edits,
+            "warnings": warnings, "quality": transcript_quality.analyze_transcript(raw)}
+
+
+class TranscriptEditIn(BaseModel):
+    segment_id: int
+    word_index: int
+    original_words: list[dict]
+    corrected_text: str
+
+
+@router.post("/{name}/transcript-edits", dependencies=[Depends(require_admin)])
+def post_transcript_edit(name: str, body: TranscriptEditIn) -> dict:
+    path = _checked_transcript_path(name)
+    try:
+        return transcript_edits.save_edit(path, **body.model_dump())
+    except transcript_edits.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.put("/{name}/transcript-edits/{edit_id}", dependencies=[Depends(require_admin)])
+def put_transcript_edit(name: str, edit_id: str, body: TranscriptEditIn) -> dict:
+    path = _checked_transcript_path(name)
+    try:
+        return transcript_edits.save_edit(path, **body.model_dump(), edit_id=edit_id)
+    except transcript_edits.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/{name}/transcript-edits/{edit_id}", dependencies=[Depends(require_admin)])
+def delete_transcript_edit(name: str, edit_id: str) -> dict:
+    path = _checked_transcript_path(name)
+    try:
+        if not transcript_edits.delete_edit(path, edit_id):
+            raise HTTPException(status_code=404, detail="correction not found")
+    except transcript_edits.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"deleted": True}
 
 
 @router.get("/{name}/clips")

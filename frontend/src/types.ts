@@ -85,6 +85,35 @@ export type TranscriptWord = {
   end: number
 }
 
+export type RawTranscriptWord = { word: string; start: number; end: number }
+export type TranscriptSegment = {
+  id: number
+  start: number
+  end: number
+  text: string
+  words: RawTranscriptWord[]
+  raw_words: RawTranscriptWord[]
+}
+export type TranscriptEdit = {
+  id: string
+  segment_id: number
+  word_index: number
+  original_words: RawTranscriptWord[]
+  original_text: string
+  corrected_text: string
+  edited_at: string
+  affected_start: number
+  affected_end: number
+  timing_needs_alignment: boolean
+}
+export type TranscriptResponse = {
+  source: string
+  segments: TranscriptSegment[]
+  edits: TranscriptEdit[]
+  warnings: string[]
+  quality: { status: string; findings: unknown[] }
+}
+
 export type Me = {
   login: string | null
   name: string | null

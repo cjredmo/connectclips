@@ -1,4 +1,4 @@
-import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, Sermon, Track, TranscriptWord, UsageResponse } from './types'
+import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptWord, UsageResponse } from './types'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -110,6 +110,23 @@ export const api = {
   getTranscriptWords: (source: string, start: number, end: number) =>
     jsonFetch<{ start: number; end: number; words: TranscriptWord[] }>(
       `/sermons/${encodeURIComponent(source)}/transcript-words?start=${start}&end=${end}`,
+    ),
+
+  getTranscript: (source: string, start: number, end: number) =>
+    jsonFetch<TranscriptResponse>(
+      `/sermons/${encodeURIComponent(source)}/transcript?start=${start}&end=${end}`,
+    ),
+  saveTranscriptEdit: (
+    source: string, body: { segment_id: number; word_index: number;
+      original_words: RawTranscriptWord[]; corrected_text: string }, editId?: string,
+  ) => jsonFetch<TranscriptEdit>(
+    `/sermons/${encodeURIComponent(source)}/transcript-edits${editId ? `/${encodeURIComponent(editId)}` : ''}`,
+    { method: editId ? 'PUT' : 'POST', body: JSON.stringify(body) },
+  ),
+  deleteTranscriptEdit: (source: string, editId: string) =>
+    jsonFetch<{ deleted: boolean }>(
+      `/sermons/${encodeURIComponent(source)}/transcript-edits/${encodeURIComponent(editId)}`,
+      { method: 'DELETE' },
     ),
 
   captionStyles: () => jsonFetch<{ styles: { key: string; label: string }[]; default: string }>('/caption-styles'),
