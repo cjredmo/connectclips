@@ -1,4 +1,5 @@
 import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
+import { parseCaptionStylesResponse } from './captionStyles'
 import { normalizeTranscriptResponse, normalizeTranscriptStatus } from './transcriptResponse'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -143,7 +144,7 @@ export const api = {
       { method: 'DELETE' },
     ),
 
-  captionStyles: () => jsonFetch<{ styles: { key: string; label: string }[]; default: string }>('/caption-styles'),
+  captionStyles: () => jsonFetch<unknown>('/caption-styles').then(parseCaptionStylesResponse),
 
   // Per-deployment publish targets -- which channel/page each platform's
   // upload deep-link should point at. GET is open (the Publish view reads

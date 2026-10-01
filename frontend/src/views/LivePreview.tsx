@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { captionWordState, currentWordIndex } from '../captionReveal'
-import type { Track, TranscriptWord } from '../types'
+import { captionBottomMargin, chunkCaptionWords, liveCaptionStyle } from '../captionStyles'
+import type { CaptionStyle, Track, TranscriptWord } from '../types'
 
 type Props = {
   sermon: string
@@ -9,7 +10,7 @@ type Props = {
   clipEnd: number
   transcriptRevision?: number
   sourceVideoRef: React.RefObject<HTMLVideoElement | null>
-  captionStyleKey: string
+  captionStyle: CaptionStyle | null
   captionMarginV: number | null
   onCaptionMarginVChange: (v: number | null) => void
   includeHookTitle: boolean
@@ -29,59 +30,8 @@ const PANE_H = 640
 const FRAME_H = 1920
 const PANE_SCALE = PANE_H / FRAME_H
 
-// Per-style chunking rules — mirrors the values in backend/app/services/captions.py
-// STYLES dict. Visuals come from CSS (App.css `.cp.style-*`). Memory:
-// project_caption_styles — keep this in sync with backend STYLES.
-const STYLE_CHUNKING: Record<string, { maxWords: number; maxChars: number }> = {
-  classic:     { maxWords: 3, maxChars: 22 },
-  neon_pop:    { maxWords: 3, maxChars: 22 },
-  block:       { maxWords: 3, maxChars: 20 },
-  white_block: { maxWords: 3, maxChars: 20 },
-  word_pop:    { maxWords: 1, maxChars: 20 },
-}
-const MIN_GAP_FOR_BREAK = 0.55
-const MAX_CHUNK_DURATION = 3.0
 const HOOK_DURATION = 2.0
 const HOOK_FADE = 0.3
-
-// Default caption margin_v per style (matches backend STYLES). Used when the
-// volunteer hasn't dragged the caption position yet (caption_margin_v=null).
-const STYLE_DEFAULT_MARGIN_V: Record<string, number> = {
-  classic: 500, neon_pop: 600, block: 480, white_block: 480, word_pop: 0,
-}
-// "word_pop" uses alignment=5 (middle) on the backend; for the live preview
-// it makes more sense to position via a margin_v offset like the others. The
-// default 960 puts it visually centered.
-const STYLE_DEFAULT_MARGIN_V_WORDPOP = 960
-
-// Port of backend captions.chunk_words — same break rules so the live preview
-// matches what the eventual export will burn in.
-function chunkWords(words: TranscriptWord[], maxWords: number, maxChars: number): TranscriptWord[][] {
-  const chunks: TranscriptWord[][] = []
-  let cur: TranscriptWord[] = []
-  for (const w of words) {
-    if (cur.length > 0) {
-      const chars = cur.reduce((a, x) => a + x.text.length, 0) + cur.length
-      const dur = cur[cur.length - 1].end - cur[0].start
-      const gap = w.start - cur[cur.length - 1].end
-      const last = cur[cur.length - 1].text
-      const endsSentence = last.endsWith('.') || last.endsWith('?') || last.endsWith('!')
-      if (
-        cur.length >= maxWords ||
-        chars + 1 + w.text.length > maxChars ||
-        dur >= MAX_CHUNK_DURATION ||
-        gap > MIN_GAP_FOR_BREAK ||
-        endsSentence
-      ) {
-        chunks.push(cur)
-        cur = []
-      }
-    }
-    cur.push(w)
-  }
-  if (cur.length > 0) chunks.push(cur)
-  return chunks
-}
 
 // Port of backend captions._fit_font_size — pick a hook font size that lets
 // the longest line fit horizontally without libass auto-wrapping further.
@@ -119,7 +69,7 @@ function hookLines(title: string): { lines: string[]; fontSize: number } {
 
 export function LivePreview({
   sermon, clipStart, clipEnd, transcriptRevision, sourceVideoRef,
-  captionStyleKey, captionMarginV, onCaptionMarginVChange,
+  captionStyle, captionMarginV, onCaptionMarginVChange,
   includeHookTitle, hookTitle, identityId, zoomLevel, lockCamera,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -261,9 +211,8 @@ export function LivePreview({
 
   // Compute current chunk + current word for caption rendering.
   const chunks = useMemo(() => {
-    const rules = STYLE_CHUNKING[captionStyleKey] ?? STYLE_CHUNKING.classic
-    return chunkWords(words, rules.maxWords, rules.maxChars)
-  }, [words, captionStyleKey])
+    return captionStyle ? chunkCaptionWords(words, captionStyle) : []
+  }, [words, captionStyle])
 
   const currentChunk = useMemo(() => {
     for (let i = 0; i < chunks.length; i++) {
@@ -294,10 +243,7 @@ export function LivePreview({
 
   // Effective caption_margin_v — the volunteer's drag value if set, otherwise
   // the style's default. Translated to a CSS bottom offset within the pane.
-  const effectiveMarginV = captionMarginV ?? (
-    captionStyleKey === 'word_pop' ? STYLE_DEFAULT_MARGIN_V_WORDPOP
-    : STYLE_DEFAULT_MARGIN_V[captionStyleKey] ?? STYLE_DEFAULT_MARGIN_V.classic
-  )
+  const effectiveMarginV = captionStyle ? captionBottomMargin(captionStyle, captionMarginV) : 0
   const captionBottomPx = effectiveMarginV * PANE_SCALE
 
   // Drag handle: vertical-only. We drag the caption box's center, then derive
@@ -347,10 +293,10 @@ export function LivePreview({
           {hook.lines.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       )}
-      {currentChunk && (
+      {currentChunk && captionStyle && (
         <div
-          className={`cap-live style-${captionStyleKey}`}
-          style={{ bottom: `${captionBottomPx}px` }}
+          className="cap-live"
+          style={liveCaptionStyle(captionStyle, captionMarginV)}
         >
           <div className="cp-line">
             {currentChunk.chunk.map((w, i) => (

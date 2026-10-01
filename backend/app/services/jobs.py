@@ -31,7 +31,7 @@ from typing import Literal
 
 from app import db
 from app.config import settings
-from app.services import alignment_runner, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
+from app.services import alignment_runner, captions, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
 
 JobKind = Literal["transcribe", "repair_transcript", "align_transcript", "youtube_download", "select_clips", "export_clip", "upload", "prescan_faces"]
 JobStatus = Literal["queued", "running", "done", "failed"]
@@ -313,6 +313,7 @@ def create_export_clip_job(
     user_login: str | None = None,
     user_name: str | None = None,
 ) -> Job:
+    captions.get_style(caption_style)  # reject an explicitly unknown key before queuing
     src = settings.data_sources_dir / source_name
     if not src.is_file():
         raise FileNotFoundError(f"source not found: {source_name}")

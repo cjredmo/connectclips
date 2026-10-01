@@ -34,6 +34,33 @@ export type ClipUserEdits = {
 
 export type ZoomLevel = 'tight' | 'medium' | 'wide' | 'stage'
 
+// Version 1 is served by /api/caption-styles from the backend's built-ins.
+// A chunk limit of one means one word at a time; larger limits use progressive
+// reveal with an active word. No preset ID controls presentation behavior.
+export type CaptionStyle = {
+  schema_version: 1
+  key: string
+  label: string
+  font_name: string
+  font_size: number
+  font_weight: number
+  primary_color: string
+  highlight_color: string
+  outline_color: string
+  outline_width: number
+  shadow_depth: number
+  highlight_scale: number
+  vertical_anchor: 'bottom' | 'middle' | 'top'
+  margin_v: number
+  max_words_per_chunk: number
+  max_chars_per_chunk: number
+  background_box: boolean
+  background_color: string
+  background_opacity: number
+  preview_highlight_color: string | null
+  preview_background_opacity: number | null
+}
+
 export type Clip = {
   start: number          // effective: Claude's value, overridden by user_edits.start if set
   end: number            // effective

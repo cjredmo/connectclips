@@ -11,7 +11,8 @@ picks one in the trim view and we render the ASS accordingly.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import re
+from dataclasses import asdict, dataclass, replace
 
 # Approximate average character width as a fraction of font size for bold sans
 # fonts. Used only to predict whether a chunk will wrap to a second line so we
@@ -29,29 +30,70 @@ def _estimate_lines(chunk_chars: int, font_size: int, video_w: int) -> int:
 
 @dataclass(frozen=True)
 class CaptionStyle:
-    """Visual parameters for one preset. Tweak in one place per preset."""
+    """Versioned, frontend-friendly caption parameters shared with ASS export.
+
+    A chunk size of one is the single-word presentation mode. Larger chunks
+    progressively reveal words and highlight the current word.
+    """
     key: str
     label: str  # human-readable, shown in the dropdown
     font_name: str
     font_size: int
-    primary_color: str    # ASS BGR: &HBBGGRR (no alpha)
+    primary_color: str    # RGB hex; ASS color conversion happens at export
     highlight_color: str
     outline_color: str
     outline_width: int
     shadow_depth: int
     highlight_scale: int  # percent — current word pops larger
-    alignment: int        # ASS alignment: 2=bottom-center, 5=middle-center, 8=top-center
+    vertical_anchor: str  # bottom, middle, or top
     margin_v: int         # px from the alignment edge
-    bold: bool
+    font_weight: int  # browser weight; ASS maps 700+ to its existing bold flag
     # chunking — different styles can prefer different word counts
     max_words_per_chunk: int
     max_chars_per_chunk: int
-    # if True, draw a solid bar behind the text (separate ASS event under the
-    # text layer). bar_color is BGR-only (no alpha prefix), bar_alpha is the
-    # ASS \1a transparency hex — &H00& opaque, &HFF& fully transparent.
+    # Background is drawn as a separate ASS event below the text layer.
     background_box: bool
-    bar_color: str = "&H000000&"  # default black for existing block style
-    bar_alpha: str = "&H40&"      # 25% opaque (lower number = more visible)
+    background_color: str = "#000000"
+    background_opacity: float = 191 / 255
+    # Preserve legacy browser colors where they differed from ASS. New styles
+    # can leave these unset so preview and export use the same values.
+    preview_highlight_color: str | None = None
+    preview_background_opacity: float | None = None
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        if self.schema_version != 1 or not self.key or not self.label:
+            raise ValueError("invalid caption style identity or version")
+        if not self.font_name or any(c in self.font_name for c in ",\r\n{}"):
+            raise ValueError("invalid caption font")
+        if any(not re.fullmatch(r"#[0-9A-Fa-f]{6}", color) for color in
+               (self.primary_color, self.highlight_color, self.outline_color,
+                self.background_color, *([self.preview_highlight_color]
+                                         if self.preview_highlight_color is not None else []))):
+            raise ValueError("caption colors must be RGB hex")
+        if self.vertical_anchor not in {"bottom", "middle", "top"}:
+            raise ValueError("invalid caption anchor")
+        if not (1 <= self.font_size <= 300 and 0 <= self.outline_width <= 30 and
+                0 <= self.shadow_depth <= 30 and 50 <= self.highlight_scale <= 300 and
+                0 <= self.margin_v <= 1920 and 100 <= self.font_weight <= 900 and
+                1 <= self.max_words_per_chunk <= 20 and
+                1 <= self.max_chars_per_chunk <= 200 and
+                0 <= self.background_opacity <= 1 and
+                (self.preview_background_opacity is None or
+                 0 <= self.preview_background_opacity <= 1)):
+            raise ValueError("caption style value is out of range")
+
+    def descriptor(self) -> dict:
+        return asdict(self)
+
+
+def _ass_color(rgb: str, *, alpha: bool = True) -> str:
+    rr, gg, bb = rgb[1:3], rgb[3:5], rgb[5:7]
+    return f"&H{'00' if alpha else ''}{bb}{gg}{rr}{'' if alpha else '&'}"
+
+
+def _ass_alpha(opacity: float) -> str:
+    return f"&H{255 - round(opacity * 255):02X}&"
 
 
 # --- Presets ---------------------------------------------------------------
@@ -62,33 +104,34 @@ STYLES: dict[str, CaptionStyle] = {
         label="Classic — yellow highlight",
         font_name="DejaVu Sans",
         font_size=90,
-        primary_color="&H00FFFFFF",   # white
-        highlight_color="&H0000FFFF", # yellow (BGR)
-        outline_color="&H00000000",
+        primary_color="#FFFFFF",
+        highlight_color="#FFFF00",
+        outline_color="#000000",
         outline_width=5,
         shadow_depth=2,
         highlight_scale=110,
-        alignment=2,
+        vertical_anchor="bottom",
         margin_v=500,
-        bold=True,
+        font_weight=800,
         max_words_per_chunk=3,
         max_chars_per_chunk=22,
         background_box=False,
+        preview_highlight_color="#FFD700",
     ),
     "neon_pop": CaptionStyle(
         key="neon_pop",
         label="Neon Pop — pink highlight, larger pop",
         font_name="DejaVu Sans",
         font_size=96,
-        primary_color="&H00FFFFFF",
-        highlight_color="&H00B469FF",  # hot pink (BGR ≈ rgb(255,105,180))
-        outline_color="&H00000000",
+        primary_color="#FFFFFF",
+        highlight_color="#FF69B4",
+        outline_color="#000000",
         outline_width=6,
         shadow_depth=3,
         highlight_scale=130,
-        alignment=2,
+        vertical_anchor="bottom",
         margin_v=600,
-        bold=True,
+        font_weight=800,
         max_words_per_chunk=3,
         max_chars_per_chunk=22,
         background_box=False,
@@ -98,15 +141,15 @@ STYLES: dict[str, CaptionStyle] = {
         label="Block — text on dark bar",
         font_name="DejaVu Sans",
         font_size=80,
-        primary_color="&H00FFFFFF",
-        highlight_color="&H0000FFFF",  # yellow
-        outline_color="&H00000000",
+        primary_color="#FFFFFF",
+        highlight_color="#FFFF00",
+        outline_color="#000000",
         outline_width=2,
         shadow_depth=0,
         highlight_scale=110,
-        alignment=2,
+        vertical_anchor="bottom",
         margin_v=480,
-        bold=True,
+        font_weight=800,
         # Tighter than other styles: each chunk should fit on one line so the
         # bar height stays predictable. The bar still grows to multiple lines
         # if a chunk overflows (see generate_ass), but we'd rather not rely on
@@ -114,46 +157,50 @@ STYLES: dict[str, CaptionStyle] = {
         max_words_per_chunk=3,
         max_chars_per_chunk=20,
         background_box=True,
-        bar_color="&H000000&",
-        bar_alpha="&H40&",
+        background_color="#000000",
+        background_opacity=191 / 255,
+        preview_highlight_color="#FFD700",
+        preview_background_opacity=0.75,
     ),
     "white_block": CaptionStyle(
         key="white_block",
         label="White Block — black text on white bar, red highlight",
         font_name="DejaVu Sans",
         font_size=80,
-        primary_color="&H00000000",     # black text
-        highlight_color="&H000000FF",   # red (BGR — RGB(255,0,0))
-        outline_color="&H00000000",
+        primary_color="#000000",
+        highlight_color="#FF0000",
+        outline_color="#000000",
         outline_width=0,                # no outline; black text on white bar is legible enough
         shadow_depth=0,
         highlight_scale=110,
-        alignment=2,
+        vertical_anchor="bottom",
         margin_v=480,
-        bold=True,
+        font_weight=800,
         max_words_per_chunk=3,
         max_chars_per_chunk=20,
         background_box=True,
-        bar_color="&HFFFFFF&",          # white
-        bar_alpha="&H10&",              # near-fully opaque (small alpha for slight see-through)
+        background_color="#FFFFFF",
+        background_opacity=239 / 255,
+        preview_background_opacity=0.95,
     ),
     "word_pop": CaptionStyle(
         key="word_pop",
         label="Word Pop — one big word at a time",
         font_name="DejaVu Sans",
         font_size=140,
-        primary_color="&H00FFFFFF",
-        highlight_color="&H0000FFFF",  # not used much — only one word
-        outline_color="&H00000000",
+        primary_color="#FFFFFF",
+        highlight_color="#FFFF00",
+        outline_color="#000000",
         outline_width=8,
         shadow_depth=4,
         highlight_scale=100,           # only one word in chunk; no scale-up
-        alignment=5,                   # middle-center
+        vertical_anchor="middle",
         margin_v=0,
-        bold=True,
+        font_weight=900,
         max_words_per_chunk=1,
         max_chars_per_chunk=20,
         background_box=False,
+        preview_highlight_color="#FFFFFF",
     ),
 }
 
@@ -162,13 +209,16 @@ DEFAULT_STYLE = "classic"
 
 def list_styles() -> list[dict]:
     """Used by the API to populate the frontend dropdown."""
-    return [{"key": s.key, "label": s.label} for s in STYLES.values()]
+    return [s.descriptor() for s in STYLES.values()]
 
 
 def get_style(key: str | None) -> CaptionStyle:
-    if not key or key not in STYLES:
+    if key is None or key == "":
         return STYLES[DEFAULT_STYLE]
-    return STYLES[key]
+    try:
+        return STYLES[key]
+    except KeyError as exc:
+        raise ValueError(f"unknown caption style: {key}") from exc
 
 
 # --- Chunking + ASS emission ----------------------------------------------
@@ -362,19 +412,20 @@ def generate_ass(
     # bogus drag value can't push the text off-frame. The 80px floor leaves
     # room for the outline + a small breathing margin from the edge.
     if caption_margin_v is not None:
-        s = CaptionStyle(**{**s.__dict__, "margin_v": max(80, min(video_h - 80, int(caption_margin_v)))})
+        s = replace(s, margin_v=max(80, min(video_h - 80, int(caption_margin_v))))
     chunks = chunk_words(words, s)
 
     # We always use BorderStyle=1 (outline + shadow). When the style asks for a
     # background bar (background_box=True) we draw it as a separate ASS event
     # underneath the text — using BorderStyle=3 instead breaks because libass
     # splits the box at every per-word inline override.
-    bold_flag = -1 if s.bold else 0
+    bold_flag = -1 if s.font_weight >= 700 else 0
+    ass_alignment = {"bottom": 2, "middle": 5, "top": 8}[s.vertical_anchor]
     style_line = (
         f"Style: Default,{s.font_name},{s.font_size},"
-        f"{s.primary_color},{s.primary_color},{s.outline_color},&H00000000,"
+        f"{_ass_color(s.primary_color)},{_ass_color(s.primary_color)},{_ass_color(s.outline_color)},&H00000000,"
         f"{bold_flag},0,0,0,100,100,0,0,1,{s.outline_width},{s.shadow_depth},"
-        f"{s.alignment},80,80,{s.margin_v},1"
+        f"{ass_alignment},80,80,{s.margin_v},1"
     )
     # The Hook style is intentionally separate from the caption style: the
     # overlay is a different visual register (giant centered title, just for
@@ -432,7 +483,7 @@ def generate_ass(
             path = f"m 0 0 l {video_w} 0 l {video_w} {bar_h} l 0 {bar_h}"
             events.append(
                 f"Dialogue: 0,{_fmt_time(chunk_start)},{_fmt_time(chunk_end)},Default,,0,0,0,,"
-                f"{{\\an7\\pos(0,{bar_top})\\bord0\\shad0\\1c{s.bar_color}\\1a{s.bar_alpha}\\p1}}{path}{{\\p0}}"
+                f"{{\\an7\\pos(0,{bar_top})\\bord0\\shad0\\1c{_ass_color(s.background_color, alpha=False)}\\1a{_ass_alpha(s.background_opacity)}\\p1}}{path}{{\\p0}}"
             )
 
         for i, current in enumerate(chunk):
@@ -441,9 +492,9 @@ def generate_ass(
                 escaped = _ass_escape(w.text)
                 if j == i:
                     parts.append(
-                        f"{{\\alpha&H00&\\c{s.highlight_color}\\fscx{s.highlight_scale}\\fscy{s.highlight_scale}}}"
+                        f"{{\\alpha&H00&\\c{_ass_color(s.highlight_color)}\\fscx{s.highlight_scale}\\fscy{s.highlight_scale}}}"
                         f"{escaped}"
-                        f"{{\\c{s.primary_color}\\fscx100\\fscy100}}"
+                        f"{{\\c{_ass_color(s.primary_color)}\\fscx100\\fscy100}}"
                     )
                 elif j > i:
                     # Hide fill, outline and shadow while retaining the word's

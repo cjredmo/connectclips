@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, fileUrl } from '../api'
-import type { Clip, Identity, Job, Sermon, ZoomLevel } from '../types'
+import type { CaptionStyle, Clip, Identity, Job, Sermon, ZoomLevel } from '../types'
 import { Publish } from './Publish'
 import { CaptionStylePicker } from './CaptionStylePicker'
 import { LivePreview } from './LivePreview'
@@ -78,7 +78,7 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [showTranscript, setShowTranscript] = useState(false)
   const [transcriptRevision, setTranscriptRevision] = useState(0)
-  const [styles, setStyles] = useState<{ key: string; label: string }[]>([])
+  const [styles, setStyles] = useState<CaptionStyle[]>([])
   // Backend's default style key. Captured at captionStyles fetch time so the
   // Reset-to-suggestion handler can restore it after wiping overrides.
   const [defaultStyleKey, setDefaultStyleKey] = useState<string>('classic')
@@ -125,7 +125,7 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
         // Don't clobber a saved style choice with the backend default.
         if (userEdits.caption_style == null) setStyleKey(r.default)
       })
-      .catch(() => { /* fall back to none — backend uses default */ })
+      .catch((e) => setError(`Caption styles unavailable: ${String(e)}`))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -530,7 +530,7 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
             clipEnd={end}
             transcriptRevision={transcriptRevision}
             sourceVideoRef={videoRef}
-            captionStyleKey={styleKey}
+            captionStyle={styles.find(style => style.key === styleKey) ?? null}
             captionMarginV={captionMarginV}
             onCaptionMarginVChange={setCaptionMarginVU}
             includeHookTitle={includeHookTitle}

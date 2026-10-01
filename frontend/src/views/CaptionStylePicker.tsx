@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-
-type StyleEntry = { key: string; label: string }
+import { captionPresentation, thumbnailStyle } from '../captionStyles'
+import type { CaptionStyle } from '../types'
 
 type Props = {
-  styles: StyleEntry[]
+  styles: CaptionStyle[]
   value: string
   onChange: (key: string) => void
 }
 
-/** Custom dropdown showing each caption style as a live-animated mini preview.
- *  The preview's visuals are hardcoded to mirror backend STYLES — keep in
- *  sync with backend/app/services/captions.py. */
+/** Dropdown thumbnails use the same descriptors as LivePreview and ASS. */
 export function CaptionStylePicker({ styles, value, onChange }: Props) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -40,7 +38,7 @@ export function CaptionStylePicker({ styles, value, onChange }: Props) {
         onClick={() => setOpen((o) => !o)}
         title={selected?.label}
       >
-        <CaptionPreview styleKey={selected?.key ?? 'classic'} small />
+        {selected && <CaptionPreview style={selected} small />}
         <span className="cs-trigger-label">{selected?.label ?? 'Caption style'}</span>
         <span className="cs-caret">▼</span>
       </button>
@@ -55,7 +53,7 @@ export function CaptionStylePicker({ styles, value, onChange }: Props) {
               role="option"
               aria-selected={s.key === value}
             >
-              <CaptionPreview styleKey={s.key} />
+              <CaptionPreview style={s} />
               <div className="cs-option-label">{s.label}</div>
             </button>
           ))}
@@ -65,14 +63,14 @@ export function CaptionStylePicker({ styles, value, onChange }: Props) {
   )
 }
 
-/** A short mock that animates the highlight across a few sample words.
- *  The visuals are class-driven — see App.css `.cp.style-{key}` rules. */
-function CaptionPreview({ styleKey, small = false }: { styleKey: string; small?: boolean }) {
-  const isWordPop = styleKey === 'word_pop'
+/** A short animated mock of single-word or progressive-chunk presentation. */
+function CaptionPreview({ style, small = false }: { style: CaptionStyle; small?: boolean }) {
+  const singleWord = captionPresentation(style) === 'single_word'
   return (
-    <div className={`cp ${small ? 'cp-small' : ''} style-${styleKey}`}>
-      <div className="cp-frame">
-        {isWordPop ? (
+    <div className={`cp ${small ? 'cp-small' : ''}`} style={thumbnailStyle(style, small)}>
+      <div className={`cp-frame${singleWord ? ' single-word' : ''}`}>
+        {style.background_box && <div className="cp-box" />}
+        {singleWord ? (
           <div className="cp-word-pop">
             <span className="cp-word w1">HELLO</span>
             <span className="cp-word w2">FRIENDS</span>
