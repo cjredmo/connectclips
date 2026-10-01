@@ -18,6 +18,7 @@ from anthropic import Anthropic
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.services.transcript_alignment import load_display_transcript
 
 
 class ClipCandidate(BaseModel):
@@ -130,7 +131,7 @@ def select_clips(
     num_clips_min: int = 3,
     num_clips_max: int = 8,
 ) -> dict:
-    transcript = json.loads(transcript_path.read_text())
+    transcript = load_display_transcript(transcript_path)
     segments_text = _segment_view(transcript)
     duration_min = transcript["duration"] / 60
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.identity import get_user
+from app.routers.auth import require_admin
 from app.services import jobs
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -25,6 +26,32 @@ async def create_job(body: CreateJobRequest, request: Request) -> dict:
         job = jobs.create_transcribe_job(body.source, user_login=u.login, user_name=u.name)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return jobs.job_dict(job)
+
+
+@router.post("/repair-transcript", status_code=201, dependencies=[Depends(require_admin)])
+async def create_repair_transcript_job(body: CreateJobRequest, request: Request) -> dict:
+    u = get_user(request)
+    try:
+        job = jobs.create_repair_job(body.source, user_login=u.login, user_name=u.name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return jobs.job_dict(job)
+
+
+@router.post("/align-transcript", status_code=201, dependencies=[Depends(require_admin)])
+async def create_align_transcript_job(body: CreateJobRequest, request: Request) -> dict:
+    u = get_user(request)
+    try:
+        job = jobs.create_alignment_job(body.source, user_login=u.login, user_name=u.name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return jobs.job_dict(job)
 
 

@@ -1,4 +1,5 @@
-import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, Sermon, Track, TranscriptWord, UsageResponse } from './types'
+import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
+import { normalizeTranscriptResponse, normalizeTranscriptStatus } from './transcriptResponse'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -110,6 +111,36 @@ export const api = {
   getTranscriptWords: (source: string, start: number, end: number) =>
     jsonFetch<{ start: number; end: number; words: TranscriptWord[] }>(
       `/sermons/${encodeURIComponent(source)}/transcript-words?start=${start}&end=${end}`,
+    ),
+
+  getTranscript: (source: string, start?: number, end?: number) =>
+    jsonFetch<Partial<TranscriptResponse>>(
+      `/sermons/${encodeURIComponent(source)}/transcript${start === undefined && end === undefined ? '' :
+        `?${new URLSearchParams({ ...(start === undefined ? {} : { start: String(start) }),
+          ...(end === undefined ? {} : { end: String(end) }) })}`}`,
+    ).then(normalizeTranscriptResponse),
+  getTranscriptStatus: (source: string) =>
+    jsonFetch<Partial<TranscriptStatus>>(`/sermons/${encodeURIComponent(source)}/transcript-status`)
+      .then(normalizeTranscriptStatus),
+  startRepairTranscript: (source: string) =>
+    jsonFetch<Job>('/jobs/repair-transcript', {
+      method: 'POST', body: JSON.stringify({ source }),
+    }),
+  startAlignTranscript: (source: string) =>
+    jsonFetch<Job>('/jobs/align-transcript', {
+      method: 'POST', body: JSON.stringify({ source }),
+    }),
+  saveTranscriptEdit: (
+    source: string, body: { segment_id: number | string; word_index: number;
+      original_words: RawTranscriptWord[]; corrected_text: string }, editId?: string,
+  ) => jsonFetch<TranscriptEdit>(
+    `/sermons/${encodeURIComponent(source)}/transcript-edits${editId ? `/${encodeURIComponent(editId)}` : ''}`,
+    { method: editId ? 'PUT' : 'POST', body: JSON.stringify(body) },
+  ),
+  deleteTranscriptEdit: (source: string, editId: string) =>
+    jsonFetch<{ deleted: boolean }>(
+      `/sermons/${encodeURIComponent(source)}/transcript-edits/${encodeURIComponent(editId)}`,
+      { method: 'DELETE' },
     ),
 
   captionStyles: () => jsonFetch<{ styles: { key: string; label: string }[]; default: string }>('/caption-styles'),

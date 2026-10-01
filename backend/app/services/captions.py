@@ -1,9 +1,8 @@
 """Generate karaoke-highlight ASS subtitles from Whisper word timings.
 
-Each *word* gets its own Dialogue event — the chunk text is identical across
-the chunk's events, but a different word is colored & scaled-up each time.
-libass renders that as the moving "current word" highlight viewers expect
-from short-form video.
+Each *word* gets its own Dialogue event. Every event retains the full chunk
+for stable layout, but future words are transparent until their start time.
+The current word is colored and scaled up.
 
 Multiple visual presets are available via :data:`STYLES` — the volunteer
 picks one in the trim view and we render the ASS accordingly.
@@ -442,12 +441,16 @@ def generate_ass(
                 escaped = _ass_escape(w.text)
                 if j == i:
                     parts.append(
-                        f"{{\\c{s.highlight_color}\\fscx{s.highlight_scale}\\fscy{s.highlight_scale}}}"
+                        f"{{\\alpha&H00&\\c{s.highlight_color}\\fscx{s.highlight_scale}\\fscy{s.highlight_scale}}}"
                         f"{escaped}"
                         f"{{\\c{s.primary_color}\\fscx100\\fscy100}}"
                     )
+                elif j > i:
+                    # Hide fill, outline and shadow while retaining the word's
+                    # glyphs in libass layout so the chunk stays centered.
+                    parts.append(f"{{\\alpha&HFF&}}{escaped}")
                 else:
-                    parts.append(escaped)
+                    parts.append(f"{{\\alpha&H00&}}{escaped}")
             text = " ".join(parts)
             start_t = current.start
             # End at next word's start (within chunk) or the chunk's end

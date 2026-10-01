@@ -85,6 +85,70 @@ export type TranscriptWord = {
   end: number
 }
 
+export type RawTranscriptWord = { word: string; start: number; end: number }
+export type TranscriptSegment = {
+  id: number | string
+  start: number
+  end: number
+  text: string
+  words: RawTranscriptWord[]
+  raw_words: RawTranscriptWord[]
+  reference_words?: RawTranscriptWord[]
+}
+export type TranscriptEdit = {
+  id: string
+  segment_id: number | string
+  word_index: number
+  original_words: RawTranscriptWord[]
+  original_text: string
+  corrected_text: string
+  edited_at: string
+  affected_start: number
+  affected_end: number
+  timing_needs_alignment: boolean
+}
+export type TranscriptQuality = { status: string; findings: unknown[] }
+
+export type TranscriptRepairStatus = {
+  repair_exists: boolean
+  repair_status: string
+  repair_failure_reason: string | null
+  recent_repair_attempts: { status: string; backend?: string; failure_reason?: string }[]
+  repaired_ranges: { start: number; end: number; backend: string; model: string }[]
+  human_review_required: boolean
+  warnings: string[]
+}
+
+export type AlignmentStatus = {
+  status: 'not_aligned' | 'aligning' | 'aligned' | 'partially_aligned' | 'stale' | 'failed'
+  acceptable: boolean
+  aligned_words: number
+  total_words: number
+  fallback_words: number
+  stale_ranges: [number, number][]
+  diagnostics: string[]
+}
+
+export type TranscriptResponse = {
+  source: string
+  segments: TranscriptSegment[]
+  edits: TranscriptEdit[]
+  warnings: string[]
+  quality: TranscriptQuality
+  raw_quality: TranscriptQuality
+  effective_quality: TranscriptQuality
+  repair: TranscriptRepairStatus
+  // False for an older running backend that serves raw words without the
+  // effective-transcript fields needed to save corrections safely.
+  supports_effective_transcript: boolean
+}
+
+export type TranscriptStatus = TranscriptRepairStatus & {
+  raw_quality: TranscriptQuality
+  effective_quality: TranscriptQuality
+  alignment: AlignmentStatus
+}
+
 export type Me = {
   login: string | null
   name: string | null
@@ -150,7 +214,7 @@ export type UsageResponse = {
 
 export type Job = {
   id: string
-  kind: 'transcribe' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
+  kind: 'transcribe' | 'repair_transcript' | 'align_transcript' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
   status: JobStatus
   source: string | null
   transcript_path: string | null

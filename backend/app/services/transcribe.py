@@ -47,7 +47,7 @@ ProgressCB = Callable[[str, float], None]
 
 # Cached models per backend. Loading is cheap-ish but model weights stay
 # resident, so we keep the singleton for the process lifetime.
-_ct2_model: Any = None
+_ct2_models: dict[tuple[str, str, str], Any] = {}
 _whispercpp_model: Any = None
 _model_lock = Lock()
 
@@ -123,23 +123,24 @@ def _resolve_device() -> tuple[str, str]:
 
 # ---------- Backend: faster-whisper / CTranslate2 -------------------------
 
-def _get_ct2_model():
-    """Lazy-load + cache the faster-whisper model."""
-    global _ct2_model
+def _get_ct2_model(model_name: str | None = None):
+    """Lazy-load and cache faster-whisper models without changing defaults."""
+    resolved_model = model_name or settings.whisper_model
+    device, compute = _resolve_device()
+    key = (resolved_model, device, compute)
     with _model_lock:
-        if _ct2_model is None:
+        if key not in _ct2_models:
             from faster_whisper import WhisperModel
-            device, compute = _resolve_device()
             logger.info(
                 "loading faster-whisper (model=%s, device=%s, compute_type=%s)",
-                settings.whisper_model, device, compute,
+                resolved_model, device, compute,
             )
-            _ct2_model = WhisperModel(
-                settings.whisper_model,
+            _ct2_models[key] = WhisperModel(
+                resolved_model,
                 device=device,
                 compute_type=compute,
             )
-    return _ct2_model
+    return _ct2_models[key]
 
 
 def _transcribe_ctranslate2(source: Path, progress_cb: ProgressCB | None) -> dict:
@@ -518,5 +519,8 @@ def transcript_path_for(source_name: str) -> Path:
 def write_transcript(transcript: dict) -> Path:
     out = transcript_path_for(transcript["source"])
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(transcript, indent=2))
+    # Keep the first Whisper result as the permanent raw artifact. Repair and
+    # human corrections are separate sidecars, never writes to this file.
+    with out.open("x", encoding="utf-8") as handle:
+        json.dump(transcript, handle, indent=2)
     return out
