@@ -1,4 +1,5 @@
 import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
+import { normalizeTranscriptResponse, normalizeTranscriptStatus } from './transcriptResponse'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -112,14 +113,21 @@ export const api = {
       `/sermons/${encodeURIComponent(source)}/transcript-words?start=${start}&end=${end}`,
     ),
 
-  getTranscript: (source: string, start: number, end: number) =>
-    jsonFetch<TranscriptResponse>(
-      `/sermons/${encodeURIComponent(source)}/transcript?start=${start}&end=${end}`,
-    ),
+  getTranscript: (source: string, start?: number, end?: number) =>
+    jsonFetch<Partial<TranscriptResponse>>(
+      `/sermons/${encodeURIComponent(source)}/transcript${start === undefined && end === undefined ? '' :
+        `?${new URLSearchParams({ ...(start === undefined ? {} : { start: String(start) }),
+          ...(end === undefined ? {} : { end: String(end) }) })}`}`,
+    ).then(normalizeTranscriptResponse),
   getTranscriptStatus: (source: string) =>
-    jsonFetch<TranscriptStatus>(`/sermons/${encodeURIComponent(source)}/transcript-status`),
+    jsonFetch<Partial<TranscriptStatus>>(`/sermons/${encodeURIComponent(source)}/transcript-status`)
+      .then(normalizeTranscriptStatus),
   startRepairTranscript: (source: string) =>
     jsonFetch<Job>('/jobs/repair-transcript', {
+      method: 'POST', body: JSON.stringify({ source }),
+    }),
+  startAlignTranscript: (source: string) =>
+    jsonFetch<Job>('/jobs/align-transcript', {
       method: 'POST', body: JSON.stringify({ source }),
     }),
   saveTranscriptEdit: (

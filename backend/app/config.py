@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     transcript_repair_model: str = ""
     transcript_repair_allow_model_download: bool = False
 
+    # Optional isolated WhisperX interpreter. Leave empty to run the backend
+    # without PyTorch; alignment jobs require an explicit worker environment.
+    alignment_python: str = ""
+    alignment_model: str = "WAV2VEC2_ASR_BASE_960H"
+    alignment_model_dir: str = ""
+    alignment_device: str = "cpu"
+    alignment_language: str = "en"
+
     # whispercli backend: path to the whisper-cli(.exe) binary and the dir
     # holding ggml-<model>.bin files. Empty = look on PATH for the binary
     # and ~/.cache/whisper.cpp/ for the models. install-windows.ps1 sets

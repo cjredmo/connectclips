@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.identity import get_user
 from app.routers.auth import require_admin
-from app.services import captions, clip_overrides, clip_selection, ingest, jobs, reframe, sermon_meta, transcript_edits, transcript_repairs
+from app.services import captions, clip_overrides, clip_selection, ingest, jobs, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
 from app.services.transcribe import transcript_path_for
 
 
@@ -149,7 +149,7 @@ def get_transcript_words(name: str, start: float = 0.0, end: float | None = None
     can map them directly against the source video's currentTime - start.
     """
     transcript_path = _checked_transcript_path(name)
-    transcript, _, _ = transcript_edits.load_effective_transcript(transcript_path)
+    transcript = transcript_alignment.load_display_transcript(transcript_path)
     if end is None:
         end = float(transcript.get("duration") or 1e9)
     words = captions.words_in_range(transcript, start, end)
@@ -199,7 +199,9 @@ def get_transcript(name: str, start: float | None = None, end: float | None = No
 
 @router.get("/{name}/transcript-status")
 def get_transcript_status(name: str) -> dict:
-    return transcript_repairs.transcript_status(_checked_transcript_path(name))
+    path = _checked_transcript_path(name)
+    return {**transcript_repairs.transcript_status(path),
+            "alignment": transcript_alignment.status(path)}
 
 
 class TranscriptEditIn(BaseModel):

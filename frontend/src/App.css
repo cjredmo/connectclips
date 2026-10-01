@@ -400,6 +400,13 @@ input[type="number"] {
 }
 .transcript-segments { max-height: 360px; overflow-y: auto; line-height: 1.9; }
 .transcript-segments p { margin: 6px 0; }
+.full-transcript .transcript-segments { max-height: 65vh; border-top: 1px solid var(--border); }
+.full-transcript .transcript-segments p { padding: 4px 6px; }
+.full-transcript .transcript-segments p.transcript-search-match { background: var(--border); }
+.transcript-review-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.transcript-review-tools input { flex: 1; min-width: 180px; }
+.transcript-source-player { display: block; width: min(100%, 480px); max-height: 270px; background: #000; }
+.transcript-timestamp { border: 0; background: transparent; color: var(--accent); cursor: pointer; margin-right: 8px; font-variant-numeric: tabular-nums; }
 .transcript-word {
   border: 0;
   background: transparent;

@@ -32,6 +32,7 @@ function jobLabel(j: Job): string {
     case 'youtube_download': return j.url ? `YouTube: ${shorten(j.url, 40)}` : 'YouTube download'
     case 'transcribe': return `Transcribe ${shorten(j.source, 32)}`
     case 'select_clips': return `Pick clips for ${shorten(j.source, 32)}`
+    case 'align_transcript': return `Align transcript for ${shorten(j.source, 32)}`
     case 'export_clip':
       return `Export clip ${j.clip_index ?? '?'} of ${shorten(j.source, 28)}`
     default: return j.kind

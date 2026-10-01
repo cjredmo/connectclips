@@ -31,9 +31,9 @@ from typing import Literal
 
 from app import db
 from app.config import settings
-from app.services import clip_selection, ingest, reframe, transcribe, transcript_repairs, transcript_repair_runner
+from app.services import alignment_runner, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
 
-JobKind = Literal["transcribe", "repair_transcript", "youtube_download", "select_clips", "export_clip", "upload", "prescan_faces"]
+JobKind = Literal["transcribe", "repair_transcript", "align_transcript", "youtube_download", "select_clips", "export_clip", "upload", "prescan_faces"]
 JobStatus = Literal["queued", "running", "done", "failed"]
 
 _JOB_COLUMNS = (
@@ -196,6 +196,32 @@ def create_repair_job(source_name: str, *, auto_chain: bool = False,
     return job
 
 
+def create_alignment_job(source_name: str, *, auto_chain: bool = False,
+                         user_login: str | None = None, user_name: str | None = None) -> Job:
+    if source_name in ("", ".", "..") or "/" in source_name or "\\" in source_name:
+        raise ValueError("invalid source name")
+    src = settings.data_sources_dir / source_name
+    path = transcribe.transcript_path_for(source_name)
+    if not src.is_file() or not path.is_file():
+        raise FileNotFoundError("source and effective transcript are required for alignment")
+    if not settings.alignment_python or not Path(settings.alignment_python).is_file():
+        raise ValueError("configure an isolated WhisperX interpreter before alignment")
+    quality = transcript_repairs.transcript_status(path)
+    if quality["effective_quality"]["status"] == "failed" or quality["human_review_required"]:
+        raise ValueError("effective transcript requires repair or review before alignment")
+    with db.cursor() as cur:
+        active = cur.execute(
+            "SELECT 1 FROM jobs WHERE kind = 'align_transcript' AND source = ? "
+            "AND status IN ('queued', 'running') LIMIT 1", (source_name,),
+        ).fetchone()
+    if active:
+        raise ValueError("alignment is already running")
+    job = _new_job(kind="align_transcript", source=source_name,
+                   user_login=user_login, user_name=user_name)
+    asyncio.create_task(_run_alignment(job, src, path, auto_chain))
+    return job
+
+
 def create_upload_job(
     filename: str,
     *,
@@ -268,6 +294,8 @@ def _ensure_transcript_selectable(transcript_path: Path) -> None:
     status = transcript_repairs.transcript_status(transcript_path)
     if status["effective_quality"]["status"] == "failed" or status["human_review_required"]:
         raise ValueError("transcript quality requires repair or human review before clip selection")
+    if not transcript_alignment.status(transcript_path)["acceptable"]:
+        raise ValueError("word alignment must complete before clip selection")
 
 
 def create_export_clip_job(
@@ -385,8 +413,8 @@ async def _run_transcribe(job: Job, src: Path) -> None:
                 create_repair_job(job.source, auto_chain=True,
                                   user_login=job.user_login, user_name=job.user_name)
             else:
-                _maybe_chain_select_clips(job.source, user_login=job.user_login,
-                                          user_name=job.user_name)
+                _maybe_chain_alignment(job.source, user_login=job.user_login,
+                                       user_name=job.user_name)
         except Exception:
             # Raw stays available for review; selection also checks quality.
             pass
@@ -412,6 +440,29 @@ async def _run_repair(job: Job, src: Path, transcript_path: Path, auto_chain: bo
             job.progress_percent = 1.0
             job.progress_message = "Done"
             _save(job)
+            _finish(job)
+        except Exception as exc:
+            _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+            return
+    if auto_chain and job.source:
+        _maybe_chain_alignment(job.source, user_login=job.user_login,
+                               user_name=job.user_name)
+
+
+async def _run_alignment(job: Job, src: Path, transcript_path: Path, auto_chain: bool) -> None:
+    async with _gpu_lock:
+        await _start(job)
+
+        def progress_cb(message: str, percent: float) -> None:
+            job.progress_message = message
+            job.progress_percent = max(0.0, min(1.0, percent))
+            _save(job)
+
+        try:
+            await asyncio.to_thread(alignment_runner.align_transcript, src, transcript_path,
+                                    progress_cb=progress_cb)
+            if not transcript_alignment.status(transcript_path)["acceptable"]:
+                raise transcript_alignment.AlignmentError("alignment requires review")
             _finish(job)
         except Exception as exc:
             _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
@@ -547,6 +598,23 @@ def _maybe_chain_select_clips(source_name: str, *, user_login: str | None = None
             user_login=user_login, user_name=user_name,
         )
     except Exception:
+        pass
+
+
+def _maybe_chain_alignment(source_name: str, *, user_login: str | None = None,
+                           user_name: str | None = None) -> None:
+    path = transcribe.transcript_path_for(source_name)
+    if not path.is_file():
+        return
+    if transcript_alignment.status(path)["acceptable"]:
+        _maybe_chain_select_clips(source_name, user_login=user_login, user_name=user_name)
+        return
+    if not settings.alignment_python:
+        return
+    try:
+        create_alignment_job(source_name, auto_chain=True,
+                             user_login=user_login, user_name=user_name)
+    except (ValueError, FileNotFoundError):
         pass
 
 

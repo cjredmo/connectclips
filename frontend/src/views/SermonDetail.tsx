@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Clip, ClipsFile, Job, Sermon, TranscriptStatus } from '../types'
+import { TranscriptEditor } from './TranscriptEditor'
 
 type Props = {
   sermon: Sermon
@@ -72,6 +73,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const [error, setError] = useState<string | null>(null)
   const [activeJobs, setActiveJobs] = useState<Job[]>([])
   const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
+  const [reviewTranscript, setReviewTranscript] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [minClips, setMinClips] = useState(3)
   const [maxClips, setMaxClips] = useState(8)
@@ -167,12 +169,15 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const selectJob = recentJobsFor('select_clips')
   const prescanJob = recentJobsFor('prescan_faces')
   const repairJob = recentJobsFor('repair_transcript')
+  const alignmentJob = recentJobsFor('align_transcript')
 
   const onTranscribe = () => api.startTranscribe(sermon.name).catch((e) => setError(String(e)))
   const onSelectClips = () =>
     api.startSelectClips(sermon.name, minClips, maxClips).catch((e) => setError(String(e)))
   const onRepair = () => api.startRepairTranscript(sermon.name).catch((e) => setError(String(e)))
+  const onAlign = () => api.startAlignTranscript(sermon.name).catch((e) => setError(String(e)))
   const transcriptBlocked = transcriptStatus?.human_review_required ?? false
+  const alignmentBlocked = !transcriptStatus?.alignment?.acceptable
   const onDelete = async () => {
     if (!window.confirm(`Delete "${sermon.name}"?\n\nThis removes the source file, transcript, clips.json, and every exported MP4.`)) return
     setDeleting(true)
@@ -272,6 +277,32 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
             {repairJob?.status === 'failed' && <span className="error-inline">Transcript repair requires review</span>}
           </div>
         )}
+        {admin && sermon.transcribed && (
+          <div className="step">
+            <div className="step-title">Transcript review</div>
+            <button type="button" onClick={() => setReviewTranscript(open => !open)}>
+              {reviewTranscript ? 'Close full transcript' : 'Review full transcript'}
+            </button>
+          </div>
+        )}
+        {sermon.transcribed && transcriptStatus && (
+          <div className="step">
+            <div className="step-title">Word alignment</div>
+            <span className="muted small">
+              {runningKinds.has('align_transcript') ? 'aligning' : transcriptStatus.alignment?.status ?? 'not aligned'}
+              {transcriptStatus.alignment && ` · ${transcriptStatus.alignment.aligned_words}/${transcriptStatus.alignment.total_words} words`}
+            </span>
+            {admin && !transcriptBlocked && (
+              <button onClick={onAlign} disabled={runningKinds.has('align_transcript')}>
+                {runningKinds.has('align_transcript') ? 'Aligning…' : 'Align transcript'}
+              </button>
+            )}
+            <JobProgress job={alignmentJob} />
+            {alignmentJob?.status === 'failed' && <span className="error-inline">Alignment requires review</span>}
+            {transcriptStatus.alignment?.stale_ranges.length ?
+              <span className="error-inline">Changed words need realignment</span> : null}
+          </div>
+        )}
         <div className="step">
           <div className="step-title">2. Pick clips</div>
           <div className="clip-count-controls">
@@ -300,7 +331,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
               <button
                 className="secondary"
                 onClick={onSelectClips}
-                disabled={runningKinds.has('select_clips') || transcriptBlocked}
+                disabled={runningKinds.has('select_clips') || transcriptBlocked || alignmentBlocked}
                 title="Re-run Claude clip selection with the range above"
               >
                 {runningKinds.has('select_clips') ? 'Re-running…' : 'Re-run'}
@@ -311,7 +342,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
             <>
               <button
                 onClick={onSelectClips}
-                disabled={!sermon.transcribed || runningKinds.has('select_clips') || transcriptBlocked}
+                disabled={!sermon.transcribed || runningKinds.has('select_clips') || transcriptBlocked || alignmentBlocked}
               >
                 {runningKinds.has('select_clips') ? 'Running…' : 'Run clip selection'}
               </button>
@@ -330,6 +361,11 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
           </div>
         )}
       </section>
+
+      {admin && sermon.transcribed && reviewTranscript &&
+        <TranscriptEditor source={sermon.name} fullSermon onChanged={() => {
+          api.getTranscriptStatus(sermon.name).then(setTranscriptStatus).catch(e => setError(String(e)))
+        }} />}
 
       {clips && (
         <section className="clips">

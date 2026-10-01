@@ -47,6 +47,7 @@ Thumbs.db
 transcript.json
 transcript_edits.json
 transcript_repairs.json
+alignment.json
 clips.json
 source_scan.json
 *.db

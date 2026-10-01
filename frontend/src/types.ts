@@ -107,20 +107,9 @@ export type TranscriptEdit = {
   affected_end: number
   timing_needs_alignment: boolean
 }
-export type TranscriptResponse = {
-  source: string
-  segments: TranscriptSegment[]
-  edits: TranscriptEdit[]
-  warnings: string[]
-  quality: { status: string; findings: unknown[] }
-  raw_quality: { status: string; findings: unknown[] }
-  effective_quality: { status: string; findings: unknown[] }
-  repair: Omit<TranscriptStatus, 'raw_quality' | 'effective_quality'>
-}
+export type TranscriptQuality = { status: string; findings: unknown[] }
 
-export type TranscriptStatus = {
-  raw_quality: { status: string; findings: unknown[] }
-  effective_quality: { status: string; findings: unknown[] }
+export type TranscriptRepairStatus = {
   repair_exists: boolean
   repair_status: string
   repair_failure_reason: string | null
@@ -128,6 +117,36 @@ export type TranscriptStatus = {
   repaired_ranges: { start: number; end: number; backend: string; model: string }[]
   human_review_required: boolean
   warnings: string[]
+}
+
+export type AlignmentStatus = {
+  status: 'not_aligned' | 'aligning' | 'aligned' | 'partially_aligned' | 'stale' | 'failed'
+  acceptable: boolean
+  aligned_words: number
+  total_words: number
+  fallback_words: number
+  stale_ranges: [number, number][]
+  diagnostics: string[]
+}
+
+export type TranscriptResponse = {
+  source: string
+  segments: TranscriptSegment[]
+  edits: TranscriptEdit[]
+  warnings: string[]
+  quality: TranscriptQuality
+  raw_quality: TranscriptQuality
+  effective_quality: TranscriptQuality
+  repair: TranscriptRepairStatus
+  // False for an older running backend that serves raw words without the
+  // effective-transcript fields needed to save corrections safely.
+  supports_effective_transcript: boolean
+}
+
+export type TranscriptStatus = TranscriptRepairStatus & {
+  raw_quality: TranscriptQuality
+  effective_quality: TranscriptQuality
+  alignment: AlignmentStatus
 }
 
 export type Me = {
@@ -195,7 +214,7 @@ export type UsageResponse = {
 
 export type Job = {
   id: string
-  kind: 'transcribe' | 'repair_transcript' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
+  kind: 'transcribe' | 'repair_transcript' | 'align_transcript' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
   status: JobStatus
   source: string | null
   transcript_path: string | null

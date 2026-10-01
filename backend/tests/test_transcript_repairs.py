@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from app.services import transcript_edits, transcript_repairs, transcript_repair_runner
+from app.services import transcript_alignment, transcript_edits, transcript_repairs, transcript_repair_runner
 from app.services.transcript_quality import analyze_transcript
 
 
@@ -93,6 +93,46 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(display["segments"][0]["reference_words"][0]["word"], "unique3")
         self.assertEqual(display["raw_quality"]["status"], "failed")
         self.assertEqual(display["effective_quality"]["status"], "clean")
+
+    def test_full_transcript_edit_preserves_raw_repair_and_stales_alignment(self):
+        from app.routers import sermons
+        self.activate()
+        repair_path = transcript_repairs.repairs_path_for(self.path)
+        repair_bytes = repair_path.read_bytes()
+        effective, _, _ = transcript_edits.load_effective_transcript(self.path)
+        before_fingerprint = transcript_alignment.fingerprint(effective)
+        with patch.object(sermons.settings, "data_sources_dir", Path(self.temp.name)), \
+             patch.object(sermons, "transcript_path_for", return_value=self.path):
+            unaligned = sermons.get_transcript("sample.mp4")
+        self.assertEqual(len(unaligned["segments"]), len(effective["segments"]))
+        self.assertEqual(transcript_alignment.status(self.path)["status"], "not_aligned")
+        aligned_words = [{**word, "status": "aligned", "aligned_start": word["start"],
+                          "aligned_end": word["end"], "score": 0.9}
+                         for word in transcript_alignment.flatten(effective)]
+        transcript_alignment.write(self.path, transcript_alignment.new_candidate(
+            effective, model="synthetic", ranges=[(0, 30)], words=aligned_words,
+            diagnostics=[], failed_windows=[]))
+
+        with patch.object(sermons.settings, "data_sources_dir", Path(self.temp.name)), \
+             patch.object(sermons, "transcript_path_for", return_value=self.path):
+            full = sermons.get_transcript("sample.mp4")
+            self.assertEqual(len(full["segments"]), len(effective["segments"]))
+            repaired = next(s for s in full["segments"] if s["id"] != 0 and
+                            s["id"] != 13)
+            self.assertEqual(repaired["words"][0]["word"], "unique3")
+            sermons.post_transcript_edit("sample.mp4", sermons.TranscriptEditIn(
+                segment_id=repaired["id"], word_index=0,
+                original_words=repaired["raw_words"][:2],
+                corrected_text="revised phrase"))
+            changed = sermons.get_transcript("sample.mp4")
+
+        revised = next(s for s in changed["segments"] if s["id"] == repaired["id"])
+        self.assertEqual([w["word"] for w in revised["words"][:2]], ["revised", "phrase"])
+        self.assertNotEqual(transcript_alignment.fingerprint(
+            transcript_edits.load_effective_transcript(self.path)[0]), before_fingerprint)
+        self.assertEqual(transcript_alignment.status(self.path)["status"], "stale")
+        self.assertEqual(self.path.read_bytes(), self.original_bytes)
+        self.assertEqual(repair_path.read_bytes(), repair_bytes)
 
     def test_candidate_validation_rejects_unhealthy_result(self):
         bad = candidate(self.raw)
@@ -359,6 +399,14 @@ class RepairTests(unittest.TestCase):
             jobs._maybe_chain_select_clips("sample.mp4")
         select.assert_not_called()
         self.activate()
+        with self.assertRaises(ValueError):
+            jobs._ensure_transcript_selectable(self.path)
+        effective, _, _ = transcript_edits.load_effective_transcript(self.path)
+        words = [{**word, "status": "aligned", "aligned_start": word["start"],
+                  "aligned_end": word["end"]} for word in transcript_alignment.flatten(effective)]
+        transcript_alignment.write(self.path, transcript_alignment.new_candidate(
+            effective, model="synthetic", ranges=[(0, 30)], words=words,
+            diagnostics=[], failed_windows=[]))
         jobs._ensure_transcript_selectable(self.path)
 
 
@@ -377,12 +425,12 @@ class RepairWorkflowTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(jobs.transcribe, "write_transcript", return_value=path), \
                  patch.object(jobs.transcribe, "transcript_path_for", return_value=path), \
                  patch.object(jobs, "create_repair_job") as repair, \
-                 patch.object(jobs, "_maybe_chain_select_clips") as select, \
+                 patch.object(jobs, "_maybe_chain_alignment") as align, \
                  patch.object(jobs, "_maybe_chain_prescan"):
                 await jobs._run_transcribe(job, source)
             repair.assert_called_once()
             self.assertTrue(repair.call_args.kwargs["auto_chain"])
-            select.assert_not_called()
+            align.assert_not_called()
 
     async def test_clean_new_transcript_skips_repair(self):
         from app.services import jobs
@@ -400,11 +448,11 @@ class RepairWorkflowTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(jobs.transcribe, "write_transcript", return_value=path), \
                  patch.object(jobs.transcribe, "transcript_path_for", return_value=path), \
                  patch.object(jobs, "create_repair_job") as repair, \
-                 patch.object(jobs, "_maybe_chain_select_clips") as select, \
+                 patch.object(jobs, "_maybe_chain_alignment") as align, \
                  patch.object(jobs, "_maybe_chain_prescan"):
                 await jobs._run_transcribe(job, source)
             repair.assert_not_called()
-            select.assert_called_once()
+            align.assert_called_once()
 
 
 if __name__ == "__main__":
