@@ -5,6 +5,7 @@ import { TranscriptEditor } from './TranscriptEditor'
 import { manualClipDuration, parseManualClipTime, submitManualClipInputs } from '../manualClipTime'
 import { clipDetailSections, importResultMessage, parseClipImportText } from '../clipImport'
 import type { ImportPreview } from '../clipImport'
+import { PromptLibrary } from './PromptLibrary'
 
 type Props = {
   sermon: Sermon
@@ -91,6 +92,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const [importBusy, setImportBusy] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
   const [importMessage, setImportMessage] = useState<string | null>(null)
+  const [promptOpen, setPromptOpen] = useState(false)
   // Full-sermon YouTube URL drives the "watch from this moment" deep link in
   // the Publish view. Stored as a sidecar per sermon; admin edits it once
   // per sermon and volunteers consume the resulting deep link.
@@ -411,6 +413,10 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
             disabled={runningKinds.has('select_clips')}>
             Import JSON
           </button>}
+          {admin && sermon.transcribed && <button type="button"
+            onClick={() => setPromptOpen(open => !open)}>
+            {promptOpen ? 'Close AI Chat' : 'AI Chat · Prompt Library'}
+          </button>}
         </div>
         {prescanJob && (prescanJob.status === 'queued' || prescanJob.status === 'running') && (
           <div className="step">
@@ -419,6 +425,8 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
           </div>
         )}
       </section>
+
+      {admin && sermon.transcribed && promptOpen && <PromptLibrary source={sermon.name} />}
 
       {admin && sermon.transcribed && manualOpen && <form className="manual-clip-form"
         onSubmit={onCreateManualClip}>

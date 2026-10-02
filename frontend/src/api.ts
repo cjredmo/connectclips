@@ -1,6 +1,8 @@
 import type { CaptionStyle, Clip, ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
 import { parseCaptionStylesResponse } from './captionStyles'
 import { normalizeTranscriptResponse, normalizeTranscriptStatus } from './transcriptResponse'
+import { normalizePromptLibrary } from './clipPrompts'
+import type { ClipPrompt } from './clipPrompts'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -39,6 +41,21 @@ export const api = {
       `/sermons/${encodeURIComponent(name)}/clips/import`,
       { method: 'POST', body: JSON.stringify(document) },
     ),
+  clipPrompts: () => jsonFetch<unknown>('/clip-prompts').then(normalizePromptLibrary),
+  createClipPrompt: (name: string, description: string, selection_focus: string) =>
+    jsonFetch<ClipPrompt>('/clip-prompts', {
+      method: 'POST', body: JSON.stringify({ name, description, selection_focus }),
+    }),
+  updateClipPrompt: (id: string, name: string, description: string, selection_focus: string,
+    expected_revision: number) => jsonFetch<ClipPrompt>(`/clip-prompts/${encodeURIComponent(id)}`, {
+      method: 'PUT', body: JSON.stringify({ name, description, selection_focus, expected_revision }),
+    }),
+  duplicateClipPrompt: (id: string, name: string) =>
+    jsonFetch<ClipPrompt>(`/clip-prompts/${encodeURIComponent(id)}/duplicate`, {
+      method: 'POST', body: JSON.stringify({ name }),
+    }),
+  deleteClipPrompt: (id: string) =>
+    jsonFetch<{ deleted: boolean }>(`/clip-prompts/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   listJobs: (limit = 200) => jsonFetch<Job[]>(`/jobs?limit=${limit}`),
   getJob: (id: string) => jsonFetch<Job>(`/jobs/${id}`),

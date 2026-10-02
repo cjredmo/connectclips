@@ -50,6 +50,7 @@ transcript_edits.json
 transcript_repairs.json
 alignment.json
 caption_styles.json
+clip_prompts.json
 clips.json
 source_scan.json
 *.db

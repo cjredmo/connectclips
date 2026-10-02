@@ -126,7 +126,7 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
         <div className="transcript-review-tools">
           <button type="button" onClick={copyForAi}
             disabled={!data?.supports_effective_transcript || copying || busy || data.segments.length === 0}>
-            {copying ? 'Copying…' : 'Copy transcript for AI'}
+            {copying ? 'Copying…' : 'Copy transcript only'}
           </button>
           {copied && <span role="status" className="muted small">Copied</span>}
           <label htmlFor="transcript-search">Search transcript</label>

@@ -350,6 +350,24 @@ input[type="number"] {
 .clip-import-panel ul { padding-left: 20px; max-height: 240px; overflow-y: auto; }
 .clip-import-panel li { margin: 6px 0; }
 .clip-import-panel .action-row { display: flex; gap: 8px; }
+.clip-prompt-library {
+  margin: -12px 0 24px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.clip-prompt-library h3, .clip-prompt-editor h4 { margin: 0 0 10px; }
+.clip-prompt-library label, .clip-prompt-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 10px 0;
+}
+.clip-prompt-library select { max-width: 360px; }
+.clip-prompt-library textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.clip-prompt-library .action-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.clip-prompt-editor { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 
 .clips ul { list-style: none; padding: 0; margin: 0; }
 .clip-card {
