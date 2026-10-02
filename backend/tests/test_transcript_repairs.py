@@ -392,12 +392,6 @@ class RepairTests(unittest.TestCase):
         from app.services import jobs
         with self.assertRaises(ValueError):
             jobs._ensure_transcript_selectable(self.path)
-        with patch.object(jobs.transcribe, "transcript_path_for", return_value=self.path), \
-             patch.object(jobs.clip_selection, "clips_path_for",
-                          return_value=Path(self.temp.name) / "clips.json"), \
-             patch.object(jobs, "create_select_clips_job") as select:
-            jobs._maybe_chain_select_clips("sample.mp4")
-        select.assert_not_called()
         self.activate()
         with self.assertRaises(ValueError):
             jobs._ensure_transcript_selectable(self.path)
@@ -411,7 +405,7 @@ class RepairTests(unittest.TestCase):
 
 
 class RepairWorkflowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_failed_new_transcript_queues_repair_before_selection(self):
+    async def test_failed_new_transcript_queues_repair_before_alignment(self):
         from app.services import jobs
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "sample.mp4"

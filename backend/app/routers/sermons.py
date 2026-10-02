@@ -436,7 +436,7 @@ async def upload_sermon(request: Request, file: UploadFile = File(...)) -> dict:
     out = await asyncio.to_thread(
         ingest.save_upload, file.file, file.filename, settings.data_sources_dir,
     )
-    # Auto-pipeline: kick off transcribe → select-clips chain on uploaded file
+    # Start transcript processing for the uploaded file.
     u = get_user(request)
     jobs._maybe_chain_transcribe(
         out.name, user_login=u.login, user_name=u.name,

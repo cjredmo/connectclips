@@ -203,7 +203,7 @@ def create_repair_job(source_name: str, *, auto_chain: bool = False,
     return job
 
 
-def create_alignment_job(source_name: str, *, auto_chain: bool = False,
+def create_alignment_job(source_name: str, *,
                          user_login: str | None = None, user_name: str | None = None) -> Job:
     if source_name in ("", ".", "..") or "/" in source_name or "\\" in source_name:
         raise ValueError("invalid source name")
@@ -225,7 +225,7 @@ def create_alignment_job(source_name: str, *, auto_chain: bool = False,
         raise ValueError("alignment is already running")
     job = _new_job(kind="align_transcript", source=source_name,
                    user_login=user_login, user_name=user_name)
-    asyncio.create_task(_run_alignment(job, src, path, auto_chain))
+    asyncio.create_task(_run_alignment(job, src, path))
     return job
 
 
@@ -418,9 +418,8 @@ async def _run_transcribe(job: Job, src: Path) -> None:
         except Exception as exc:
             _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
             return
-    # Auto-chain outside the GPU lock. Failed transcripts must be repaired
-    # before their text can reach clip selection. Face prescan can run in
-    # parallel because it does not need the transcription lock.
+    # Auto-chain repair and alignment outside the GPU lock. Face prescan can
+    # run in parallel because it does not need the transcription lock.
     if job.source:
         try:
             status = transcript_repairs.transcript_status(transcribe.transcript_path_for(job.source))
@@ -431,7 +430,7 @@ async def _run_transcribe(job: Job, src: Path) -> None:
                 _maybe_chain_alignment(job.source, user_login=job.user_login,
                                        user_name=job.user_name)
         except Exception:
-            # Raw stays available for review; selection also checks quality.
+            # Raw stays available for review; explicit selection checks quality.
             pass
         _maybe_chain_prescan(job.source, user_login=job.user_login, user_name=job.user_name)
 
@@ -464,7 +463,7 @@ async def _run_repair(job: Job, src: Path, transcript_path: Path, auto_chain: bo
                                user_name=job.user_name)
 
 
-async def _run_alignment(job: Job, src: Path, transcript_path: Path, auto_chain: bool) -> None:
+async def _run_alignment(job: Job, src: Path, transcript_path: Path) -> None:
     async with _gpu_lock:
         await _start(job)
 
@@ -482,9 +481,6 @@ async def _run_alignment(job: Job, src: Path, transcript_path: Path, auto_chain:
         except Exception as exc:
             _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
             return
-    if auto_chain and job.source:
-        _maybe_chain_select_clips(job.source, user_login=job.user_login,
-                                  user_name=job.user_name)
 
 
 async def _run_youtube(job: Job, url: str) -> None:
@@ -577,10 +573,6 @@ async def _run_select_clips(
 
 
 # ---------- Auto-pipeline chaining --------------------------------------
-# Default range when the auto-pipeline triggers select-clips. Skewed toward 8
-# so the volunteer typically gets ~8 candidates and picks the best 5.
-_AUTO_CLIPS_MIN = 7
-_AUTO_CLIPS_MAX = 10
 
 
 def _maybe_chain_transcribe(source_name: str, *, user_login: str | None = None, user_name: str | None = None) -> None:
@@ -597,37 +589,17 @@ def _maybe_chain_transcribe(source_name: str, *, user_login: str | None = None, 
         pass
 
 
-def _maybe_chain_select_clips(source_name: str, *, user_login: str | None = None, user_name: str | None = None) -> None:
-    """Trigger clip selection iff the transcript exists and clips.json doesn't."""
-    if not transcribe.transcript_path_for(source_name).is_file():
-        return
-    if clip_selection.clips_path_for(source_name).exists():
-        return
-    try:
-        _ensure_transcript_selectable(transcribe.transcript_path_for(source_name))
-    except ValueError:
-        return
-    try:
-        create_select_clips_job(
-            source_name, _AUTO_CLIPS_MIN, _AUTO_CLIPS_MAX,
-            user_login=user_login, user_name=user_name,
-        )
-    except Exception:
-        pass
-
-
 def _maybe_chain_alignment(source_name: str, *, user_login: str | None = None,
                            user_name: str | None = None) -> None:
     path = transcribe.transcript_path_for(source_name)
     if not path.is_file():
         return
     if transcript_alignment.status(path)["acceptable"]:
-        _maybe_chain_select_clips(source_name, user_login=user_login, user_name=user_name)
         return
     if not settings.alignment_python:
         return
     try:
-        create_alignment_job(source_name, auto_chain=True,
+        create_alignment_job(source_name,
                              user_login=user_login, user_name=user_name)
     except (ValueError, FileNotFoundError):
         pass

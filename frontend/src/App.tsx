@@ -313,7 +313,7 @@ function App() {
           </div>
         ) : u.status === 'success' ? (
           <div key={u.id} className="upload-banner success">
-            ✓ Uploaded <strong>{u.filename}</strong>. Transcribe + clip selection started in the background.
+            ✓ Uploaded <strong>{u.filename}</strong>. Transcript processing started in the background.
           </div>
         ) : (
           <div key={u.id} className="upload-banner failed">
