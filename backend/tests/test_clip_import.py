@@ -4,6 +4,7 @@ import json
 import math
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +13,7 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.routers.auth import require_admin
-from app.services import clip_import, clip_overrides, clip_selection, jobs, manual_clips
+from app.services import clip_import, clip_metadata, clip_overrides, clip_selection, jobs, manual_clips
 from app.services.transcribe import transcript_path_for
 
 
@@ -61,6 +62,9 @@ class ClipImportTests(unittest.TestCase):
         self.assertEqual({key: first[key] for key in ("description", "why_selected", "hook", "score")},
                          {key: clips[0][key] for key in ("description", "why_selected", "hook", "score")})
         self.assertEqual(first["origin"], "json_import")
+        self.assertEqual(first["selection_method"], "json_import")
+        self.assertEqual(first["selection_batch_id"], second["selection_batch_id"])
+        self.assertTrue(first["selection_created_at"])
         self.assertNotEqual(first["id"], second["id"])
         self.assertNotIn("score", second)
         version = stored["clips_version"]
@@ -69,6 +73,114 @@ class ClipImportTests(unittest.TestCase):
         self.assertEqual((duplicate.json()["imported"], duplicate.json()["duplicates_skipped"]), (0, 2))
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["clips"], stored["clips"])
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["clips_version"], version)
+
+    def test_ai_chat_import_uses_snapshot_and_keeps_duplicates_unchanged(self):
+        batch = uuid.uuid4().hex
+        context = {"source": "sample.mp4", "selection_method": "ai_chat",
+                   "selection_batch_id": batch, "selection_prompt_id": "teaching-theology",
+                   "selection_prompt_name": "Teaching / Theology",
+                   "selection_prompt_revision": None,
+                   "selection_created_at": "2026-01-02T03:04:05.000Z"}
+        document = {"schema_version": 1, "clips": [
+            {"title": "Sample A", "start": 10, "end": 20},
+            {"title": "Sample B", "start": 30, "end": 40}]}
+        response = self.client.post("/api/sermons/sample.mp4/clips/import",
+                                    json={"payload": document, "provenance": context})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["imported"], 2)
+        before = json.loads(self.path.read_text(encoding="utf-8"))["clips"]
+        for clip in before:
+            self.assertEqual(clip["origin"], "json_import")
+            self.assertEqual(clip["selection_method"], "ai_chat")
+            self.assertEqual(clip["selection_batch_id"], batch)
+            self.assertEqual(clip["selection_prompt_id"], "teaching-theology")
+            self.assertEqual(clip["selection_prompt_name"], "Teaching / Theology")
+            self.assertIsNone(clip["selection_prompt_revision"])
+        duplicate = self.client.post("/api/sermons/sample.mp4/clips/import",
+            json={"payload": document, "provenance": {**context,
+                  "selection_batch_id": uuid.uuid4().hex,
+                  "selection_prompt_name": "Renamed prompt"}})
+        self.assertEqual((duplicate.json()["imported"], duplicate.json()["duplicates_skipped"]), (0, 2))
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["clips"], before)
+        imported_override = {"end": 21, "caption_style": "classic"}
+        clip_overrides.replace_all("sample.mp4", {"0": imported_override})
+        clip_selection.write_clips({"source": "sample.mp4", "clips_version": "next",
+            "clips": [{"title": "New Claude A", "start": 50, "end": 60},
+                      {"title": "New Claude B", "start": 70, "end": 80}]})
+        after = json.loads(self.path.read_text(encoding="utf-8"))["clips"]
+        self.assertEqual(after[2:], before)
+        self.assertEqual(after[0]["selection_method"], "claude_api")
+        self.assertEqual(after[0]["selection_batch_id"], after[1]["selection_batch_id"])
+        self.assertEqual(after[0]["selection_created_at"], after[1]["selection_created_at"])
+        self.assertNotEqual(after[0]["selection_batch_id"], batch)
+        self.assertEqual(clip_overrides.load_overrides("sample.mp4"), {"2": imported_override})
+
+    def test_import_rejects_spoofed_or_malformed_provenance(self):
+        clip = {"title": "Sample", "start": 1, "end": 2}
+        context = {"source": "sample.mp4", "selection_method": "ai_chat",
+                   "selection_batch_id": uuid.uuid4().hex,
+                   "selection_prompt_id": "custom:" + "a" * 32,
+                   "selection_prompt_name": "Original name", "selection_prompt_revision": 2,
+                   "selection_created_at": "2026-01-02T03:04:05+00:00"}
+        for key in ("origin", "selection_method", "selection_batch_id",
+                    "selection_prompt_id", "selection_prompt_name", "selection_prompt_revision"):
+            with self.subTest(key=key):
+                response = self.import_json([{**clip, key: "spoofed"}])
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(self.path.exists())
+        invalid = [{**context, "source": "another.mp4"},
+                   {**context, "selection_method": "claude_api"},
+                   {**context, "selection_batch_id": "bad"},
+                   {**context, "selection_prompt_id": "bad id"},
+                   {**context, "selection_prompt_id": "unknown-preset"},
+                   {**context, "selection_prompt_name": " "},
+                   {**context, "selection_prompt_revision": 0},
+                   {**context, "selection_created_at": "not a date"},
+                   {**context, "unknown": "field"}]
+        for provenance in invalid:
+            with self.subTest(provenance=provenance):
+                response = self.client.post("/api/sermons/sample.mp4/clips/import",
+                    json={"payload": {"schema_version": 1, "clips": [clip]},
+                          "provenance": provenance})
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertFalse(self.path.exists())
+        self.assertEqual(self.client.post("/api/sermons/sample.mp4/clips/import", json={
+            "payload": {"schema_version": 1, "clips": [clip]}}).status_code, 400)
+        self.assertEqual(self.client.post("/api/sermons/sample.mp4/clips/import", json={
+            "payload": {"schema_version": 1, "clips": [clip]},
+            "provenance": None}).status_code, 400)
+
+    def test_custom_prompt_revision_snapshot_is_stored(self):
+        context = {"source": "sample.mp4", "selection_method": "ai_chat",
+                   "selection_batch_id": uuid.uuid4().hex,
+                   "selection_prompt_id": "custom:" + "a" * 32,
+                   "selection_prompt_name": "Custom selection at copy time",
+                   "selection_prompt_revision": 3,
+                   "selection_created_at": "2026-01-02T03:04:05+00:00"}
+        response = self.client.post("/api/sermons/sample.mp4/clips/import", json={
+            "payload": {"schema_version": 1, "clips": [
+                {"title": "Custom sample", "start": 12, "end": 24}]},
+            "provenance": context})
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = json.loads(self.path.read_text(encoding="utf-8"))["clips"][0]
+        self.assertEqual(stored["selection_prompt_id"], context["selection_prompt_id"])
+        self.assertEqual(stored["selection_prompt_name"], context["selection_prompt_name"])
+        self.assertEqual(stored["selection_prompt_revision"], 3)
+
+    def test_legacy_normalization_does_not_invent_selection_batches(self):
+        legacy = [
+            {"origin": "ai", "title": "Earlier Claude", "start": 1, "end": 2},
+            {"origin": "json_import", "title": "Earlier import", "start": 3, "end": 4},
+            {"title": "Unclassified", "start": 5, "end": 6, "rationale": "Old metadata"},
+            {"title": "Earlier manual", "start": 7, "end": 8},
+        ]
+        normalized = [dict(clip) for clip in legacy]
+        for index, clip in enumerate(normalized):
+            clip_metadata.normalize_for_display(clip, "sample.mp4", "old", index)
+        self.assertEqual([clip["selection_method"] for clip in normalized],
+                         ["claude_api", None, None, "manual"])
+        self.assertTrue(all(clip["selection_batch_id"] is None for clip in normalized))
+        self.assertEqual(legacy[0].get("selection_method"), None)
 
     def test_all_friendly_timestamp_forms_and_numeric_seconds(self):
         starts = [("9:18", 558), ("9:18.2", 558.2), ("09:18.240", 558.24),

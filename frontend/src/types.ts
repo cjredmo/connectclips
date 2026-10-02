@@ -68,6 +68,12 @@ export type CaptionStyle = {
 export type Clip = {
   id: string
   origin: 'manual' | 'json_import' | 'ai'
+  selection_method: 'ai_chat' | 'claude_api' | 'json_import' | 'manual' | null
+  selection_batch_id: string | null
+  selection_prompt_id: string | null
+  selection_prompt_name: string | null
+  selection_prompt_revision: number | null
+  selection_created_at: string | null
   start: number          // effective: Claude's value, overridden by user_edits.start if set
   end: number            // effective
   title: string

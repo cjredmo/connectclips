@@ -242,7 +242,11 @@ def write_clips(result: dict) -> Path:
             old_clips = previous.get("clips", [])
             if not isinstance(old_clips, list) or any(not isinstance(clip, dict) for clip in old_clips):
                 raise ValueError("existing clip list is invalid")
-            new_clips = [{**clip, "id": uuid.uuid4().hex, "origin": "ai"}
+            batch_id = uuid.uuid4().hex
+            selection_created_at = result.get("created_at") or dt.datetime.now(dt.timezone.utc).isoformat()
+            new_clips = [{**clip, "id": uuid.uuid4().hex, "origin": "ai",
+                          "selection_method": "claude_api", "selection_batch_id": batch_id,
+                          "selection_created_at": selection_created_at}
                          for clip in result["clips"]]
             old_overrides = clip_overrides.load_overrides(result["source"])
             kept_overrides = {}

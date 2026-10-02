@@ -395,6 +395,7 @@ input[type="text"], input[type="password"], select, textarea {
 .clip-prompt-library select { max-width: 360px; }
 .clip-prompt-library textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .clip-prompt-library .action-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.clip-pending-selection { display: grid; gap: 8px; padding: 12px; margin: 12px 0; border: 1px solid var(--border); border-radius: 8px; }
 .clip-prompt-editor { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 
 .clips ul { list-style: none; padding: 0; margin: 0; }
@@ -421,12 +422,7 @@ input[type="text"], input[type="password"], select, textarea {
   border-radius: 12px;
   min-width: 32px;
   text-align: center;
-  color: #0e1116;
 }
-.hook-score.high { background: var(--ok); }
-.hook-score.good { background: #80cf6f; }
-.hook-score.med  { background: var(--warn); }
-.hook-score.low  { background: var(--err); color: var(--fg); }
 
 /* Larger pill used on the trim page next to the clip title — sized so
    the score is visible at a glance while the volunteer's working on

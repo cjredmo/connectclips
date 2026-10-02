@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { assemblePrompt, canEditPrompt, confirmPromptDeletion, copyPromptAndTranscript,
+import { assemblePrompt, canEditPrompt, confirmPromptDeletion,
   nextCopyName, promptDraft, selectedPrompt } from '../clipPrompts'
 import type { PromptDraft, PromptLibraryResponse } from '../clipPrompts'
+import { clearPendingSelection, copyAndStartSelection } from '../clipSelectionSession'
+import type { PendingAiSelection } from '../clipSelectionSession'
 
 const SELECTION_KEY = 'connectclips.selectedClipPrompt'
 
@@ -11,7 +13,10 @@ function savedSelection(): string | null {
   catch { return null }
 }
 
-export function PromptLibrary({ source }: { source: string }) {
+type Props = { source: string; pending: PendingAiSelection | null;
+  onPendingChange: (pending: PendingAiSelection | null) => void; onImportResults: () => void }
+
+export function PromptLibrary({ source, pending, onPendingChange, onImportResults }: Props) {
   const [library, setLibrary] = useState<PromptLibraryResponse | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(savedSelection)
   const [editor, setEditor] = useState<PromptDraft | null>(null)
@@ -85,21 +90,38 @@ export function PromptLibrary({ source }: { source: string }) {
       if (!navigator.clipboard?.writeText) {
         throw new Error('Clipboard unavailable. Use a secure browser context and allow clipboard access.')
       }
-      await copyPromptAndTranscript(library, selected.selection_focus, transcript,
-        text => navigator.clipboard.writeText(text))
+      const session = await copyAndStartSelection(library, selected, transcript, source,
+        text => navigator.clipboard.writeText(text), window.localStorage,
+        crypto.randomUUID(), new Date().toISOString())
+      onPendingChange(session)
       setCopied(true)
       if (copiedTimer.current) clearTimeout(copiedTimer.current)
       copiedTimer.current = setTimeout(() => setCopied(false), 2000)
     } catch (e) { setError(`Could not copy prompt and transcript: ${String(e)}`) }
     finally { setCopying(false) }
   }
+  const clearPending = () => {
+    try {
+      clearPendingSelection(window.localStorage, source)
+      onPendingChange(null)
+    } catch (e) { setError(`Could not clear pending selection: ${String(e)}`) }
+  }
 
   return <section className="clip-prompt-library" aria-label="AI Chat prompt library">
     <h3>AI Chat · Prompt Library</h3>
-    <p className="muted small">Choose a selection focus, copy the complete prompt with the timestamped transcript, paste it into your AI chat, then use Import JSON for the result.</p>
+    <p className="muted small">Choose a selection focus, copy the complete prompt with the timestamped transcript, paste it into your AI chat, then import the results.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {!library && !error && <p className="muted">Loading prompts…</p>}
     {library && selected && <>
+      {pending && <div className="clip-pending-selection" role="status">
+        <strong>Pending AI Chat selection · {pending.selection_prompt_name}</strong>
+        <span className="muted small">Copied {new Date(pending.selection_created_at).toLocaleString()}</span>
+        <span className="muted small">Copying another prompt replaces this pending session.</span>
+        <div className="action-row">
+          <button type="button" onClick={onImportResults}>Import results</button>
+          <button type="button" className="secondary" onClick={clearPending}>Clear</button>
+        </div>
+      </div>}
       <label>Choose prompt
         <select value={selected.id} onChange={event => select(event.target.value)}>
           <optgroup label="Built-in prompts">

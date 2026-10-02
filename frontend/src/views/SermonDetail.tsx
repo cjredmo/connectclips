@@ -10,6 +10,10 @@ import { manualClipDuration, parseManualClipTime, submitManualClipInputs } from 
 import { clipDetailSections, importResultMessage, parseClipImportText } from '../clipImport'
 import type { ImportPreview } from '../clipImport'
 import { PromptLibrary } from './PromptLibrary'
+import { loadPendingSelection, submitSelectionImport } from '../clipSelectionSession'
+import type { PendingAiSelection } from '../clipSelectionSession'
+import { selectionLabel } from '../clipProvenance'
+import { hookScoreStyle } from '../hookScore'
 
 type Props = {
   sermon: Sermon
@@ -72,13 +76,6 @@ function JobProgress({ job }: { job: Job | undefined }) {
   )
 }
 
-function hookScoreClass(score: number): string {
-  if (score >= 85) return 'high'
-  if (score >= 70) return 'good'
-  if (score >= 55) return 'med'
-  return 'low'
-}
-
 export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, onSermonUpdated, onTrim, onDeleted }: Props) {
   const [clips, setClips] = useState<ClipsFile | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -98,7 +95,10 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
   const [importBusy, setImportBusy] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
   const [importMessage, setImportMessage] = useState<string | null>(null)
+  const [importMode, setImportMode] = useState<'generic' | 'ai_chat'>('generic')
   const [promptOpen, setPromptOpen] = useState(false)
+  const [pendingSelection, setPendingSelection] = useState<PendingAiSelection | null>(
+    () => { try { return loadPendingSelection(window.localStorage, sermon.name) } catch { return null } })
   // Full-sermon YouTube URL drives the "watch from this moment" deep link in
   // the Publish view. Stored as a sidecar per sermon; admin edits it once
   // per sermon and volunteers consume the resulting deep link.
@@ -229,9 +229,15 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
     setImportBusy(true)
     setImportError(null)
     try {
-      const result = await api.importClipJson(sermon.name, importPreview.document)
+      const { result, session, remainingPending, clearError } = await submitSelectionImport(
+        sermon.name, importPreview.document, importMode, pendingSelection, () => window.localStorage,
+        (document, context) => api.importClipJson(sermon.name, document, context))
+      setPendingSelection(remainingPending)
       setClips(await api.getClips(sermon.name))
-      setImportMessage(importResultMessage(result.imported, result.duplicates_skipped))
+      setImportMessage(importResultMessage(result.imported, result.duplicates_skipped) +
+        (session ? ` AI Chat · ${session.selection_prompt_name}.` : '') +
+        (session && result.imported === 0 ? ' Pending session retained.' : ''))
+      if (clearError) setImportError('Clips imported, but the browser could not clear the pending session.')
       setImportPreview(null)
       setImportOpen(false)
     } catch (e) { setImportError(String(e instanceof Error ? e.message : e)) }
@@ -490,13 +496,14 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
             {manualOpen ? 'Close manual clip' : 'Add clip manually'}
           </button>}
           {admin && sermon.transcribed && <button type="button" className="secondary"
-            onClick={() => { setImportOpen(open => !open); setImportError(null) }}
+            onClick={() => { setImportMode('generic'); setImportPreview(null)
+              setImportOpen(open => !open); setImportError(null) }}
             disabled={runningKinds.has('select_clips')}>
             Import JSON
           </button>}
           {admin && sermon.transcribed && <button type="button"
             onClick={() => setPromptOpen(open => !open)}>
-            {promptOpen ? 'Close AI Chat' : 'AI Chat · Prompt Library'}
+            {promptOpen ? 'Close AI Chat' : pendingSelection ? 'AI Chat · Pending results' : 'AI Chat · Prompt Library'}
           </button>}
         </div>
         {prescanJob && (prescanJob.status === 'queued' || prescanJob.status === 'running') && (
@@ -507,7 +514,10 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
         )}
       </section>
 
-      {admin && sermon.transcribed && promptOpen && <PromptLibrary source={sermon.name} />}
+      {admin && sermon.transcribed && promptOpen && <PromptLibrary source={sermon.name}
+        pending={pendingSelection} onPendingChange={setPendingSelection}
+        onImportResults={() => { setImportMode('ai_chat'); setImportPreview(null)
+          setImportError(null); setImportMessage(null); setImportOpen(true) }} />}
 
       {admin && sermon.transcribed && manualOpen && <form className="manual-clip-form"
         onSubmit={onCreateManualClip}>
@@ -528,7 +538,9 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
       </form>}
 
       {admin && sermon.transcribed && importOpen && <section className="clip-import-panel">
-        <h3>Import JSON clips</h3>
+        <h3>{importMode === 'ai_chat' ? 'Import AI results' : 'Import JSON clips'}</h3>
+        {importMode === 'ai_chat' && pendingSelection &&
+          <p>Importing results for: <strong>{pendingSelection.selection_prompt_name}</strong></p>}
         <input type="file" accept=".json,application/json"
           onChange={event => { void onImportFile(event.target.files?.[0]) }} />
         {importPreview && <>
@@ -565,7 +577,8 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
                   <div className="clip-title">
                     {score !== undefined && (
                       <span
-                        className={`hook-score ${hookScoreClass(score)}`}
+                        className="hook-score"
+                        style={hookScoreStyle(score)}
                         title="Hook score: how likely a cold scroller keeps watching past 3s"
                       >
                         {score}
@@ -575,7 +588,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
                   </div>
                   <div className="clip-meta">
                     {fmtSecs(clip.start)} – {fmtSecs(clip.end)} · {(clip.end - clip.start).toFixed(1)}s
-                    {clip.origin !== 'ai' && <span className="badge"> {clip.origin === 'manual' ? 'Manual' : 'JSON import'}</span>}
+                    <span className="badge">{selectionLabel(clip)}</span>
                     {clip.exported && <span className="badge ok"> ✓ exported</span>}
                     {exporting && <span className="badge"> exporting…</span>}
                     {latest?.status === 'failed' && (

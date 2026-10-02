@@ -345,6 +345,7 @@ function App() {
             )}
             {view.name === 'detail' && (
               <SermonDetail
+                key={view.sermon.name}
                 sermon={view.sermon}
                 section={view.section}
                 admin={me.admin}

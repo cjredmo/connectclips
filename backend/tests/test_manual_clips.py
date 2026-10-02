@@ -53,6 +53,7 @@ class ManualClipTests(unittest.TestCase):
                          ("A generic clip title", 0, 40.25))
         self.assertEqual(clip["user_edits"], {})
         self.assertEqual(clip["origin"], "manual")
+        self.assertEqual(clip["selection_method"], "manual")
         self.assertTrue(clip["id"])
         self.assertFalse(clip["exported"])
         listed = client.get("/api/sermons/sample.mp4/clips").json()
@@ -92,6 +93,7 @@ class ManualClipTests(unittest.TestCase):
             self.assertEqual(len(stored["clips"]), 2)
             self.assertEqual(stored["clips"][0]["title"], f"New suggestion {generation}")
             self.assertEqual(stored["clips"][0]["origin"], "ai")
+            self.assertEqual(stored["clips"][0]["selection_method"], "claude_api")
             self.assertEqual(stored["clips"][1], manual)
             self.assertEqual(clip_overrides.load_overrides(source), {"1": manual_override})
             self.assertEqual(len([clip for clip in stored["clips"]

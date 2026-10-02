@@ -7,6 +7,7 @@ import { CaptionStyleEditor } from './CaptionStyleEditor'
 import { canDeleteStyle, canEditStyle, editableStyleDraft } from '../captionStyles'
 import { LivePreview } from './LivePreview'
 import { TranscriptEditor } from './TranscriptEditor'
+import { hookScoreStyle } from '../hookScore'
 
 type Props = {
   sermon: Sermon
@@ -17,17 +18,6 @@ type Props = {
 }
 
 const NUDGE_STEP = 0.1 // seconds
-
-// Hook-score → CSS class. Same buckets as SermonDetail.tsx so the colors
-// match between the list view and the trim view. Duplicated here rather
-// than imported because (a) it's three lines, (b) splitting into a shared
-// utils module just for this would be overkill.
-function hookScoreClass(score: number): string {
-  if (score >= 85) return 'high'
-  if (score >= 70) return 'good'
-  if (score >= 55) return 'med'
-  return 'low'
-}
 
 // Time formatting / parsing for the trim inputs. Seconds-with-decimals
 // (235.03) is unambiguous internally but reads as a frame index to a
@@ -446,7 +436,8 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
       <h2 className="trim-title">
         {(clip.score ?? clip.hook_score) !== undefined && (
           <span
-            className={`hook-score large ${hookScoreClass(clip.score ?? clip.hook_score ?? 0)}`}
+            className="hook-score large"
+            style={hookScoreStyle(clip.score ?? clip.hook_score ?? 0)}
             title="Hook score: how likely a cold scroller keeps watching past 3 s"
           >
             {clip.score ?? clip.hook_score}

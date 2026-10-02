@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.services import clip_selection
+from app.services import clip_metadata, clip_selection
 
 _TIME = re.compile(r"^(?:(\d+):)?(\d+):([0-5]\d)(?:\.(\d{1,3}))?$")
 _SECONDS = re.compile(r"^\d+(?:\.\d{1,3})?$")
@@ -128,8 +128,18 @@ def _identity(clip: dict) -> tuple[str, float, float]:
             round(float(clip["start"]), 3), round(float(clip["end"]), 3))
 
 
-def import_clips(source_name: str, transcript_path: Path, document: Any) -> dict:
+def import_clips(source_name: str, transcript_path: Path, document: Any,
+                 provenance: Any = None) -> dict:
     candidates = validate(document, transcript_path)
+    if provenance is None:
+        context = {"selection_method": "json_import",
+                   "selection_batch_id": uuid.uuid4().hex,
+                   "selection_created_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+    else:
+        try:
+            context = clip_metadata.ai_chat_provenance(source_name, provenance)
+        except ValueError as exc:
+            raise ClipImportError([str(exc)]) from exc
     path = clip_selection.clips_path_for(source_name)
     with clip_selection.clips_lock:
         if path.exists():
@@ -158,7 +168,8 @@ def import_clips(source_name: str, transcript_path: Path, document: Any) -> dict
                 continue
             identities.add(identity)
             indices.append(len(collection["clips"]))
-            collection["clips"].append({"id": uuid.uuid4().hex, "origin": "json_import", **candidate})
+            collection["clips"].append({"id": uuid.uuid4().hex, "origin": "json_import",
+                                        **context, **candidate})
         if indices:
             clip_selection.write_json_atomic(path, collection)
     return {"imported": len(indices), "duplicates_skipped": duplicates, "indices": indices}

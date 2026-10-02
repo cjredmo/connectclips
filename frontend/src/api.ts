@@ -3,6 +3,8 @@ import { parseCaptionStylesResponse } from './captionStyles'
 import { normalizeTranscriptResponse, normalizeTranscriptStatus } from './transcriptResponse'
 import { normalizePromptLibrary } from './clipPrompts'
 import type { ClipPrompt } from './clipPrompts'
+import { importRequest } from './clipSelectionSession'
+import type { PendingAiSelection } from './clipSelectionSession'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -36,10 +38,10 @@ export const api = {
       `/sermons/${encodeURIComponent(name)}/clips/manual`,
       { method: 'POST', body: JSON.stringify(clip) },
     ),
-  importClipJson: (name: string, document: unknown) =>
+  importClipJson: (name: string, document: unknown, pending: PendingAiSelection | null = null) =>
     jsonFetch<{ imported: number; duplicates_skipped: number; clips: Clip[] }>(
       `/sermons/${encodeURIComponent(name)}/clips/import`,
-      { method: 'POST', body: JSON.stringify(document) },
+      { method: 'POST', body: JSON.stringify(importRequest(document, pending)) },
     ),
   clipPrompts: () => jsonFetch<unknown>('/clip-prompts').then(normalizePromptLibrary),
   createClipPrompt: (name: string, description: string, selection_focus: string) =>

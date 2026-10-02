@@ -315,7 +315,13 @@ def create_manual_clip(name: str, body: ManualClipIn) -> dict:
 def import_clip_json(name: str, body: Any = Body(...)) -> dict:
     transcript_path = _checked_transcript_path(name)
     try:
-        result = clip_import.import_clips(name, transcript_path, body)
+        if isinstance(body, dict) and ("payload" in body or "provenance" in body):
+            if set(body) != {"payload", "provenance"} or body["provenance"] is None:
+                raise clip_import.ClipImportError(["invalid import envelope"])
+            result = clip_import.import_clips(name, transcript_path,
+                                              body["payload"], body["provenance"])
+        else:
+            result = clip_import.import_clips(name, transcript_path, body)
     except clip_import.ClipImportError as exc:
         raise HTTPException(status_code=400, detail="Import rejected:\n" + "\n".join(exc.errors)) from exc
     listed = get_clips(name)["clips"]

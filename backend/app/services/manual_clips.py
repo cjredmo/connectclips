@@ -34,7 +34,7 @@ def create(source_name: str, transcript_path: Path, title: str,
             raise ValueError("end time exceeds sermon duration")
 
     path = clip_selection.clips_path_for(source_name)
-    clip = {"id": uuid.uuid4().hex, "origin": "manual",
+    clip = {"id": uuid.uuid4().hex, "origin": "manual", "selection_method": "manual",
             "title": title, "start": float(start), "end": float(end)}
     with clip_selection.clips_lock:
         if path.exists():
