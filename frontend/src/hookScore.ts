@@ -1,8 +1,5 @@
 import type { CSSProperties } from 'react'
 
-const DARK = '#0e1116'
-const LIGHT = '#ffffff'
-
 function luminance(hex: string): number {
   const channels = [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255)
     .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
@@ -16,10 +13,8 @@ export function contrastRatio(first: string, second: string): number {
 }
 
 export function hookScoreStyle(score: number): CSSProperties {
-  // Retain the existing score bands and backgrounds; choose the more legible text color.
-  const backgroundColor = score >= 85 ? '#146c43' : score >= 70 ? '#80cf6f' :
-    score >= 55 ? '#8a5b00' : '#b42318'
-  const color = contrastRatio(backgroundColor, LIGHT) >= contrastRatio(backgroundColor, DARK)
-    ? LIGHT : DARK
-  return { backgroundColor, color }
+  const color = score >= 100 ? '#083d26' : score >= 95 ? '#0b4f32' :
+    score >= 85 ? '#166b41' : score >= 75 ? '#2f704c' :
+      score >= 60 ? '#43795a' : '#547b5d'
+  return { backgroundColor: '#ffffff', color }
 }

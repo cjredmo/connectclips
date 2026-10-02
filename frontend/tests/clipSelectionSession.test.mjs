@@ -101,12 +101,14 @@ test('provenance labels cover current and legacy clips', () => {
   assert.equal(selectionLabel({ selection_method: null, selection_prompt_name: null }), 'Legacy / Unclassified')
 })
 
-test('representative score badges keep at least 4.5:1 text contrast', () => {
-  for (const score of [60, 75, 85, 95, 100]) {
+test('score badges stay white with increasingly strong green numbers', () => {
+  let previousContrast = 0
+  for (const score of [0, 60, 75, 85, 95, 100]) {
     const { backgroundColor, color } = hookScoreStyle(score)
-    assert.ok(contrastRatio(backgroundColor, color) >= 4.5, String(score))
+    assert.equal(backgroundColor, '#ffffff')
+    const contrast = contrastRatio(backgroundColor, color)
+    assert.ok(contrast >= 4.5, String(score))
+    assert.ok(contrast > previousContrast, String(score))
+    previousContrast = contrast
   }
-  assert.equal(hookScoreStyle(75).color, '#0e1116')
-  assert.equal(hookScoreStyle(95).color, '#ffffff')
-  assert.equal(hookScoreStyle(100).backgroundColor, hookScoreStyle(95).backgroundColor)
 })

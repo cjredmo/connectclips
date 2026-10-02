@@ -12,7 +12,7 @@ import type { ImportPreview } from '../clipImport'
 import { PromptLibrary } from './PromptLibrary'
 import { loadPendingSelection, submitSelectionImport } from '../clipSelectionSession'
 import type { PendingAiSelection } from '../clipSelectionSession'
-import { selectionLabel } from '../clipProvenance'
+import { groupClips, selectionLabel } from '../clipProvenance'
 import { hookScoreStyle } from '../hookScore'
 
 type Props = {
@@ -40,6 +40,13 @@ function fmtRelTime(iso: string | null): string {
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`
   if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`
   return `${Math.floor(ms / 86_400_000)}d ago`
+}
+
+function selectionRunLabel(selectedAt: string | null, batchId: string | null, runNumber: number): string {
+  if (selectedAt && Number.isFinite(Date.parse(selectedAt))) {
+    return `Selected ${new Date(selectedAt).toLocaleString()}`
+  }
+  return batchId ? `Selection run ${runNumber}` : 'Run not recorded'
 }
 
 function jobLabel(j: Job): string {
@@ -257,6 +264,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
     : transcriptState.detail
   const exportedClips = clips?.clips.map((clip, index) => ({ clip, index }))
     .filter(({ clip }) => clip.exported && clip.output_filename) ?? []
+  const clipGroups = groupClips(clips?.clips ?? [])
   const onDelete = async () => {
     if (!window.confirm(`Delete "${sermon.name}"?\n\nThis removes the source file, transcript, clips.json, and every exported MP4.`)) return
     setDeleting(true)
@@ -561,11 +569,21 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
       {clips && (
         <section className="clips">
           <h2>Clip suggestions</h2>
-          <ul>
-            {clips.clips
-              .map((clip, i) => ({ clip, i }))
-              .sort((a, b) => (b.clip.hook_score ?? -1) - (a.clip.hook_score ?? -1))
-              .map(({ clip, i }) => {
+          {clipGroups.length === 0 && <p className="muted">No clips yet.</p>}
+          {clipGroups.map(group => <section className="clip-group" key={group.key}>
+            <div className="clip-group-heading">
+              <h3>{group.label}</h3>
+              <span className="muted small">
+                {group.count} {group.count === 1 ? 'clip' : 'clips'}
+              </span>
+            </div>
+            {group.batches.map((batch, batchIndex) => <div className="clip-batch" key={batch.key}>
+              {(group.batches.length > 1 || batch.selectedAt) &&
+                <p className="clip-batch-label muted small">
+                  {selectionRunLabel(batch.selectedAt, batch.batchId, batchIndex + 1)}
+                  {' · '}{batch.clips.length} clip{batch.clips.length === 1 ? '' : 's'}
+                </p>}
+              <ul>{batch.clips.map(({ clip, index: i }) => {
               const exportJobs = activeJobs.filter(
                 (j) => j.kind === 'export_clip' && j.clip_index === i,
               )
@@ -573,7 +591,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
               const exporting = latest && (latest.status === 'queued' || latest.status === 'running')
               const score = clip.score ?? clip.hook_score
               return (
-                <li key={i} className="clip-card">
+                <li key={`${clip.id}-${i}`} className="clip-card">
                   <div className="clip-title">
                     {score !== undefined && (
                       <span
@@ -611,8 +629,9 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
                   </div>
                 </li>
               )
-            })}
-          </ul>
+            })}</ul>
+            </div>)}
+          </section>)}
         </section>
       )}
       </>}

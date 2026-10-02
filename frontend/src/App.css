@@ -399,6 +399,11 @@ input[type="text"], input[type="password"], select, textarea {
 .clip-prompt-editor { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 
 .clips ul { list-style: none; padding: 0; margin: 0; }
+.clip-group { margin-top: 24px; }
+.clip-group-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.clip-group-heading h3 { margin: 0; }
+.clip-batch { margin-top: 12px; }
+.clip-batch-label { margin: 0 0 8px; }
 .clip-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -415,6 +420,8 @@ input[type="text"], input[type="password"], select, textarea {
 
 .hook-score {
   display: inline-block;
+  background: #fff;
+  border: 1px solid var(--border);
   font-weight: 700;
   font-size: 12px;
   line-height: 1;
