@@ -8,11 +8,13 @@ import { History } from './views/History'
 import { Settings } from './views/Settings'
 import { Usage } from './views/Usage'
 import type { Clip, Me, Sermon } from './types'
+import { parseSermonSectionPath, sermonSectionPath } from './sermonWorkspace'
+import type { SermonSection } from './sermonWorkspace'
 import './App.css'
 
 type View =
   | { name: 'list' }
-  | { name: 'detail'; sermon: Sermon }
+  | { name: 'detail'; sermon: Sermon; section: SermonSection }
   | { name: 'trim'; sermon: Sermon; clip: Clip; clipIndex: number }
   | { name: 'history' }
   | { name: 'usage' }
@@ -22,7 +24,7 @@ type View =
 // come from the API on hydration.
 type Route =
   | { name: 'list' }
-  | { name: 'detail'; sermonName: string }
+  | { name: 'detail'; sermonName: string; section: SermonSection }
   | { name: 'trim'; sermonName: string; clipIndex: number }
   | { name: 'history' }
   | { name: 'usage' }
@@ -52,7 +54,7 @@ function buildPath(view: View): string {
     case 'history':  return '/history'
     case 'usage':    return '/usage'
     case 'settings': return '/settings'
-    case 'detail':   return `/sermons/${encodeURIComponent(view.sermon.name)}`
+    case 'detail':   return sermonSectionPath(view.sermon.name, view.section)
     case 'trim':     return `/sermons/${encodeURIComponent(view.sermon.name)}/clip/${view.clipIndex}`
   }
 }
@@ -66,9 +68,9 @@ function parsePath(pathname: string): Route {
   if (trim) {
     return { name: 'trim', sermonName: decodeURIComponent(trim[1]), clipIndex: parseInt(trim[2], 10) }
   }
-  const detail = pathname.match(/^\/sermons\/([^/]+)\/?$/)
+  const detail = parseSermonSectionPath(pathname)
   if (detail) {
-    return { name: 'detail', sermonName: decodeURIComponent(detail[1]) }
+    return { name: 'detail', sermonName: detail.name, section: detail.section }
   }
   return { name: 'list' }
 }
@@ -82,7 +84,7 @@ function routeMatchesView(route: Route, view: View): boolean {
   if (route.name === 'usage' && view.name === 'usage') return true
   if (route.name === 'settings' && view.name === 'settings') return true
   if (route.name === 'detail' && view.name === 'detail') {
-    return route.sermonName === view.sermon.name
+    return route.sermonName === view.sermon.name && route.section === view.section
   }
   if (route.name === 'trim' && view.name === 'trim') {
     return route.sermonName === view.sermon.name && route.clipIndex === view.clipIndex
@@ -130,7 +132,7 @@ function App() {
       throw new Error(`Sermon not found: ${route.sermonName}`)
     }
     if (route.name === 'detail') {
-      return { name: 'detail', sermon }
+      return { name: 'detail', sermon, section: route.section }
     }
     // trim
     const clipsFile = await api.getClips(sermon.name)
@@ -138,7 +140,7 @@ function App() {
     if (!clip) {
       // Clip index out of range — clips.json was regenerated since the URL
       // was bookmarked. Drop to the sermon detail so the user can pick again.
-      return { name: 'detail', sermon }
+      return { name: 'detail', sermon, section: 'clips' }
     }
     return { name: 'trim', sermon, clip, clipIndex: route.clipIndex }
   }, [])
@@ -151,6 +153,13 @@ function App() {
     const hydrateFromUrl = async () => {
       const route = parsePath(window.location.pathname)
       if (routeMatchesView(route, viewRef.current)) return  // programmatic nav, already in sync
+      // Section-to-section Back/Forward can reuse the mounted sermon controller,
+      // preserving in-progress clip forms and avoiding an unnecessary API fetch.
+      if (route.name === 'detail' && viewRef.current.name === 'detail' &&
+          route.sermonName === viewRef.current.sermon.name) {
+        setView({ ...viewRef.current, section: route.section })
+        return
+      }
       setHydrating(true)
       setHydrateError(null)
       try {
@@ -195,6 +204,13 @@ function App() {
     const list = await api.listSermons()
     return list.find((s) => s.name === name) ?? null
   }
+
+  const refreshDetailSermon = useCallback(async (name: string) => {
+    const list = await api.listSermons()
+    const updated = list.find((s) => s.name === name)
+    if (updated) setView(current => current.name === 'detail' && current.sermon.name === name
+      ? { ...current, sermon: updated } : current)
+  }, [])
 
   // Each call to startUpload creates an independent Upload entry with its own
   // XHR. Multiple uploads run in parallel — browsers cap to ~6 concurrent
@@ -321,7 +337,7 @@ function App() {
               <SermonList
                 key={listVersion}
                 admin={me.admin}
-                onOpen={(s) => navigate({ name: 'detail', sermon: s })}
+                onOpen={(s) => navigate({ name: 'detail', sermon: s, section: 'overview' })}
                 onDeleted={() => setListVersion((v) => v + 1)}
                 onUpload={startUpload}
                 uploadActive={uploads.some((u) => u.status === 'uploading')}
@@ -330,8 +346,11 @@ function App() {
             {view.name === 'detail' && (
               <SermonDetail
                 sermon={view.sermon}
+                section={view.section}
                 admin={me.admin}
                 onBack={() => navigate({ name: 'list' })}
+                onSectionChange={(section) => navigate({ name: 'detail', sermon: view.sermon, section })}
+                onSermonUpdated={refreshDetailSermon}
                 onTrim={(clip, clipIndex) =>
                   navigate({ name: 'trim', sermon: view.sermon, clip, clipIndex })
                 }
@@ -349,7 +368,7 @@ function App() {
                 clipIndex={view.clipIndex}
                 onBack={async () => {
                   const updated = await refreshSermon(view.sermon.name)
-                  navigate({ name: 'detail', sermon: updated ?? view.sermon })
+                  navigate({ name: 'detail', sermon: updated ?? view.sermon, section: 'clips' })
                 }}
               />
             )}

@@ -6,8 +6,8 @@ import type { TranscriptEdit, TranscriptResponse, TranscriptSegment } from '../t
 
 type Selection = { segment: TranscriptSegment; first: number; last: number; edit?: TranscriptEdit }
 
-export function TranscriptEditor({ source, start, end, onChanged, fullSermon = false }: {
-  source: string; start?: number; end?: number; onChanged: () => void; fullSermon?: boolean
+export function TranscriptEditor({ source, start, end, onChanged, fullSermon = false, canEdit = true }: {
+  source: string; start?: number; end?: number; onChanged: () => void; fullSermon?: boolean; canEdit?: boolean
 }) {
   const [data, setData] = useState<TranscriptResponse | null>(null)
   const [selection, setSelection] = useState<Selection | null>(null)
@@ -49,6 +49,7 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
   }, [source, start, end])
 
   const selectWord = (segment: TranscriptSegment, index: number) => {
+    if (!canEdit) return
     const edit = data?.edits.find((item) => item.segment_id === segment.id &&
       index >= item.word_index && index < item.word_index + item.original_words.length)
     const first = edit?.word_index ?? index
@@ -114,21 +115,16 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
 
   return (
     <section className={`transcript-editor${fullSermon ? ' full-transcript' : ''}`}>
-      <h3>{fullSermon ? 'Review full transcript' : 'Transcript corrections'}</h3>
-      <p className="muted small">Select a word, then extend the range if needed. Corrections change text; saved word timings stay the same until alignment. Admin mode is required to save.</p>
-      {data?.warnings.map((warning, i) => <p className="error" key={i}>{warning}</p>)}
+      <div className={fullSermon ? 'transcript-workspace-grid' : undefined}>
+      <div className="transcript-document">
+      <h3>{fullSermon ? 'Effective transcript' : 'Transcript corrections'}</h3>
+      <p className="muted small">{canEdit ? 'Select a word, then extend the range if needed. Corrections change text; saved word timings stay the same until alignment.' : 'Read the effective transcript and use timestamps to play the source.'}</p>
       {data && !data.supports_effective_transcript &&
         <p className="error">The backend needs a restart before transcript corrections are available.</p>}
       {error && <p className="error">{error}</p>}
-      {data && <p className="muted small">Raw transcription: {data.raw_quality.status}. Effective transcript: {data.effective_quality.status}.</p>}
       {data?.repair.human_review_required && <p className="error">Transcript requires review before clip selection.</p>}
       {fullSermon && <>
         <div className="transcript-review-tools">
-          <button type="button" onClick={copyForAi}
-            disabled={!data?.supports_effective_transcript || copying || busy || data.segments.length === 0}>
-            {copying ? 'Copying…' : 'Copy transcript only'}
-          </button>
-          {copied && <span role="status" className="muted small">Copied</span>}
           <label htmlFor="transcript-search">Search transcript</label>
           <input id="transcript-search" type="search" value={query}
             onChange={event => { setQuery(event.target.value); setActiveMatch(0) }}
@@ -141,8 +137,6 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
             <button type="button" onClick={() => jumpTo(activeMatch)}>Jump to {activeMatch + 1}</button>
           </>}
         </div>
-        <video ref={media} className="transcript-source-player" controls preload="metadata" src={fileUrl.source(source)} />
-        <p className="muted small">Select a timestamp to play the source from that point. Underlined words have human corrections.</p>
       </>}
       <div className="transcript-segments">
         {data?.segments.map((segment, segmentIndex) => (
@@ -156,7 +150,7 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
               const edited = data.edits.some(edit => edit.segment_id === segment.id &&
                 index >= edit.word_index && index < edit.word_index + edit.original_words.length)
               return <button type="button" key={index}
-                disabled={!data.supports_effective_transcript}
+                disabled={!canEdit || !data.supports_effective_transcript}
                 className={`transcript-word${edited ? ' edited' : ''}`}
                 title={edited ? 'Corrected text — select to edit or revert' : 'Select to correct'}
                 onClick={() => selectWord(segment, index)}>{word.word}</button>
@@ -182,6 +176,24 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
           <button type="button" onClick={() => setSelection(null)} disabled={busy}>Cancel</button>
         </div>
       </div>}
+      </div>
+      {fullSermon && <aside className="transcript-side" aria-label="Transcript source and tools">
+        <h3>Source recording</h3>
+        <video ref={media} className="transcript-source-player" controls preload="metadata" src={fileUrl.source(source)} />
+        <p className="muted small">Select a timestamp to play from that point. Underlined words have human corrections.</p>
+        <h3>Transcript tools</h3>
+        <button type="button" className="secondary" onClick={copyForAi}
+          disabled={!data?.supports_effective_transcript || copying || busy || data.segments.length === 0}>
+          {copying ? 'Copying…' : 'Copy transcript only'}
+        </button>
+        {copied && <span role="status" className="muted small">Copied</span>}
+        {data && <details className="sermon-technical-details">
+          <summary>Technical details</summary>
+          <p>Raw transcription: {data.raw_quality.status}. Effective transcript: {data.effective_quality.status}.</p>
+          {data.warnings.map((warning, i) => <p key={i}>{warning}</p>)}
+        </details>}
+      </aside>}
+      </div>
     </section>
   )
 }

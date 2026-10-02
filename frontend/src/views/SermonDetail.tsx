@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
-import { api } from '../api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { api, fileUrl } from '../api'
 import type { Clip, ClipsFile, Job, Sermon, TranscriptStatus } from '../types'
+import { SermonNav } from '../components/SermonNav'
+import { StatusBadge } from '../components/StatusBadge'
+import { nextSermonAction, transcriptPresentation } from '../sermonWorkspace'
+import type { SermonSection } from '../sermonWorkspace'
 import { TranscriptEditor } from './TranscriptEditor'
 import { manualClipDuration, parseManualClipTime, submitManualClipInputs } from '../manualClipTime'
 import { clipDetailSections, importResultMessage, parseClipImportText } from '../clipImport'
@@ -9,8 +13,11 @@ import { PromptLibrary } from './PromptLibrary'
 
 type Props = {
   sermon: Sermon
+  section: SermonSection
   admin: boolean
   onBack: () => void
+  onSectionChange: (section: SermonSection) => void
+  onSermonUpdated: (name: string) => Promise<void>
   onTrim: (clip: Clip, clipIndex: number) => void
   onDeleted: () => void
 }
@@ -72,12 +79,11 @@ function hookScoreClass(score: number): string {
   return 'low'
 }
 
-export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props) {
+export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, onSermonUpdated, onTrim, onDeleted }: Props) {
   const [clips, setClips] = useState<ClipsFile | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeJobs, setActiveJobs] = useState<Job[]>([])
   const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
-  const [reviewTranscript, setReviewTranscript] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [minClips, setMinClips] = useState(3)
   const [maxClips, setMaxClips] = useState(8)
@@ -100,6 +106,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const [programVideoId, setProgramVideoId] = useState<string | null>(null)
   const [urlError, setUrlError] = useState<string | null>(null)
   const [urlSaving, setUrlSaving] = useState(false)
+  const seenCompletedJobs = useRef(new Set<string>())
 
   const refreshClips = useCallback(() => {
     if (!sermon.clips_selected) {
@@ -161,11 +168,17 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
         if (cancelled) return
         const mine = jobs.filter((j) => j.source === sermon.name)
         setActiveJobs(mine)
+        const newlyCompleted = mine.filter(j => j.status === 'done' &&
+          !seenCompletedJobs.current.has(j.id))
+        newlyCompleted.forEach(j => seenCompletedJobs.current.add(j.id))
+        if (newlyCompleted.some(j => j.kind === 'transcribe' || j.kind === 'select_clips')) {
+          await onSermonUpdated(sermon.name)
+        }
         // If anything just finished, refresh clips
         if (mine.some((j) => j.status === 'done' && j.kind !== 'transcribe')) {
           refreshClips()
         }
-      } catch {}
+      } catch { /* the next poll will retry */ }
     }
     tick()
     const id = setInterval(tick, 2000)
@@ -173,7 +186,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
       cancelled = true
       clearInterval(id)
     }
-  }, [sermon.name, refreshClips])
+  }, [sermon.name, refreshClips, onSermonUpdated])
 
   const runningKinds = new Set(
     activeJobs.filter((j) => j.status === 'queued' || j.status === 'running').map((j) => j.kind),
@@ -228,6 +241,16 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const onAlign = () => api.startAlignTranscript(sermon.name).catch((e) => setError(String(e)))
   const transcriptBlocked = transcriptStatus?.human_review_required ?? false
   const alignmentBlocked = !transcriptStatus?.alignment?.acceptable
+  const transcriptState = transcriptPresentation(sermon, transcriptStatus, runningKinds.has('transcribe'))
+  const nextAction = nextSermonAction({ ...sermon, n_clips: clips?.clips.length ?? sermon.n_clips },
+    transcriptStatus, runningKinds.has('transcribe'))
+  const nextActionDetail = nextAction.section === 'clips'
+    ? (clips?.clips.length ?? sermon.n_clips) > 0
+      ? 'Clip suggestions are available to review and export.'
+      : 'The effective transcript is ready for clip creation.'
+    : transcriptState.detail
+  const exportedClips = clips?.clips.map((clip, index) => ({ clip, index }))
+    .filter(({ clip }) => clip.exported && clip.output_filename) ?? []
   const onDelete = async () => {
     if (!window.confirm(`Delete "${sermon.name}"?\n\nThis removes the source file, transcript, clips.json, and every exported MP4.`)) return
     setDeleting(true)
@@ -251,10 +274,55 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
           </button>
         )}
       </div>
-      <h1 title={sermon.name}>{sermon.name}</h1>
+      <header className="sermon-workspace-header">
+        <div className="sermon-workspace-heading">
+          <div>
+            <p className="sermon-eyebrow">Sermon workspace</p>
+            <h1 title={sermon.name}>{sermon.name}</h1>
+            <p className="muted small">Updated {new Date(sermon.modified_at).toLocaleString()} · {(sermon.size_bytes / 1024 / 1024).toFixed(0)} MB source</p>
+          </div>
+          <StatusBadge tone={transcriptState.tone}>{transcriptState.label}</StatusBadge>
+        </div>
+        <SermonNav active={section} onChange={onSectionChange} />
+      </header>
 
       {error && <div className="error">Error: {error}</div>}
 
+      {section === 'overview' && <>
+        <section className="sermon-overview-intro">
+          <div>
+            <p className="sermon-eyebrow">Recommended next step</p>
+            <h2>{nextAction.label}</h2>
+            <p className="muted">{nextActionDetail}</p>
+          </div>
+          <button type="button" className="primary" onClick={() =>
+            nextAction.action === 'transcribe' ? onTranscribe() : onSectionChange(nextAction.section)}
+            disabled={nextAction.action === 'transcribe' && runningKinds.has('transcribe')}>
+            {nextAction.label}
+          </button>
+        </section>
+        <div className="sermon-overview-grid">
+          <section className="sermon-summary-card">
+            <h2>Transcript</h2>
+            <StatusBadge tone={transcriptState.tone}>{transcriptState.label}</StatusBadge>
+            <p className="muted small">{transcriptState.detail}</p>
+            <button type="button" className="tertiary" onClick={() => onSectionChange('transcript')}>View transcript</button>
+          </section>
+          <section className="sermon-summary-card">
+            <h2>Clips</h2>
+            <p className="sermon-summary-value">{clips?.clips.length ?? sermon.n_clips}</p>
+            <p className="muted small">{(clips?.clips.length ?? sermon.n_clips) ? 'Clip suggestions available' : 'No clips yet'}</p>
+            <button type="button" className="tertiary" onClick={() => onSectionChange('clips')}>View clips</button>
+          </section>
+          <section className="sermon-summary-card">
+            <h2>Exports</h2>
+            <p className="sermon-summary-value">{exportedClips.length}</p>
+            <p className="muted small">Current exported clips</p>
+            <button type="button" className="tertiary" onClick={() => onSectionChange('exports')}>View exports</button>
+          </section>
+        </div>
+        <h2>Source</h2>
+        <p className="muted small">Original recording · {(sermon.size_bytes / 1024 / 1024).toFixed(0)} MB · updated {new Date(sermon.modified_at).toLocaleString()}</p>
       {(admin || programVideoId) && (
         <section className="program-url-row">
           <label className="muted small" htmlFor="program-url-input">Full sermon YouTube URL</label>
@@ -291,48 +359,51 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
           )}
         </section>
       )}
+      </>}
 
-      <section className="pipeline">
-        <div className="step">
-          <div className="step-title">1. Transcribe</div>
-          {sermon.transcribed ? (
-            <span className="badge ok">✓ done</span>
-          ) : (
-            <>
-              <button onClick={onTranscribe} disabled={runningKinds.has('transcribe')}>
-                {runningKinds.has('transcribe') ? 'Running…' : 'Run transcribe'}
-              </button>
-              <JobProgress job={transcribeJob} />
-              {transcribeJob && transcribeJob.status === 'failed' && (
-                <span className="error-inline">{jobLabel(transcribeJob)}</span>
-              )}
-            </>
-          )}
+      {section === 'overview' && <>
+        {runningKinds.has('transcribe') && <div className="sermon-processing-status">
+          <span>Transcription in progress</span><JobProgress job={transcribeJob} />
+        </div>}
+        {transcribeJob?.status === 'failed' && !sermon.transcribed &&
+          <p className="error">{jobLabel(transcribeJob)}</p>}
+        <details className="sermon-technical-details">
+          <summary>Technical details</summary>
+          {transcriptStatus ? <>
+            <p>Raw quality: {transcriptStatus.raw_quality.status} · Effective quality: {transcriptStatus.effective_quality.status}</p>
+            <p>Repair: {transcriptStatus.repair_status} · Alignment: {transcriptStatus.alignment?.status ?? 'not aligned'}</p>
+            {transcriptStatus.repair_failure_reason && <p>Recent repair issue: {transcriptStatus.repair_failure_reason}</p>}
+          </> : <p>Transcript status is not available yet.</p>}
+          {transcribeJob && <p>Latest transcription job: {jobLabel(transcribeJob)}</p>}
+        </details>
+      </>}
+
+      {section === 'transcript' && <>
+        <div className="sermon-section-heading">
+          <div><h2>Transcript</h2><p className="muted">Review the effective text and compare it with the source recording.</p></div>
+          <StatusBadge tone={transcriptState.tone}>{transcriptState.label}</StatusBadge>
         </div>
+        {!sermon.transcribed && <p className="muted">No transcript is available yet. Start transcription from Overview.</p>}
+        {!sermon.transcribed && <JobProgress job={transcribeJob} />}
+        <section className="pipeline sermon-transcript-actions">
         {sermon.transcribed && transcriptStatus && (
           <div className="step">
-            <div className="step-title">Transcript quality</div>
-            <span className="muted small">Raw: {transcriptStatus.raw_quality.status} · Effective: {transcriptStatus.effective_quality.status}</span>
-            {transcriptStatus.repair_exists && <span className="badge ok"> repaired</span>}
+            <div className="step-title">Transcript state</div>
+            <StatusBadge tone={transcriptState.tone}>{transcriptState.label}</StatusBadge>
             {transcriptBlocked && <span className="error-inline"> Transcript requires review</span>}
-            {transcriptStatus.repair_failure_reason && (
-              <span className="error-inline"> {transcriptStatus.repair_failure_reason}</span>
-            )}
             {admin && transcriptStatus.raw_quality.status === 'failed' && transcriptBlocked && (
               <button onClick={onRepair} disabled={runningKinds.has('repair_transcript')}>
                 {runningKinds.has('repair_transcript') ? 'Repairing transcript…' : 'Repair transcript'}
               </button>
             )}
             <JobProgress job={repairJob} />
-            {repairJob?.status === 'failed' && <span className="error-inline">Transcript repair requires review</span>}
-          </div>
-        )}
-        {admin && sermon.transcribed && (
-          <div className="step">
-            <div className="step-title">Transcript review</div>
-            <button type="button" onClick={() => setReviewTranscript(open => !open)}>
-              {reviewTranscript ? 'Close full transcript' : 'Review full transcript'}
-            </button>
+            {repairJob?.status === 'failed' && transcriptBlocked && <span className="error-inline">Transcript repair requires review</span>}
+            <details className="sermon-technical-details">
+              <summary>Quality details</summary>
+              <p>Raw: {transcriptStatus.raw_quality.status} · Effective: {transcriptStatus.effective_quality.status}</p>
+              {transcriptStatus.repair_exists && <p>Accepted repair available</p>}
+              {transcriptStatus.repair_failure_reason && <p>Recent repair issue: {transcriptStatus.repair_failure_reason}</p>}
+            </details>
           </div>
         )}
         {sermon.transcribed && transcriptStatus && (
@@ -348,11 +419,21 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
               </button>
             )}
             <JobProgress job={alignmentJob} />
-            {alignmentJob?.status === 'failed' && <span className="error-inline">Alignment requires review</span>}
+            {alignmentJob?.status === 'failed' && !transcriptStatus.alignment?.acceptable &&
+              <span className="error-inline">Alignment requires review</span>}
             {transcriptStatus.alignment?.stale_ranges.length ?
               <span className="error-inline">Changed words need realignment</span> : null}
           </div>
         )}
+        </section>
+        {sermon.transcribed && <TranscriptEditor source={sermon.name} fullSermon canEdit={admin} onChanged={() => {
+          api.getTranscriptStatus(sermon.name).then(setTranscriptStatus).catch(e => setError(String(e)))
+        }} />}
+      </>}
+
+      {section === 'clips' && <>
+        <div className="sermon-section-heading"><div><h2>Clips</h2><p className="muted">Create and review clip suggestions.</p></div></div>
+        <section className="pipeline sermon-clips-pipeline">
         <div className="step">
           <div className="step-title">2. Pick clips</div>
           <div className="clip-count-controls">
@@ -465,14 +546,9 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
       </section>}
       {importMessage && <p role="status" className="badge ok">{importMessage}</p>}
 
-      {admin && sermon.transcribed && reviewTranscript &&
-        <TranscriptEditor source={sermon.name} fullSermon onChanged={() => {
-          api.getTranscriptStatus(sermon.name).then(setTranscriptStatus).catch(e => setError(String(e)))
-        }} />}
-
       {clips && (
         <section className="clips">
-          <h2>Clips</h2>
+          <h2>Clip suggestions</h2>
           <ul>
             {clips.clips
               .map((clip, i) => ({ clip, i }))
@@ -526,6 +602,20 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
           </ul>
         </section>
       )}
+      </>}
+
+      {section === 'exports' && <section className="sermon-exports">
+        <div className="sermon-section-heading"><div><h2>Exports</h2><p className="muted">Current exported clip files for this sermon.</p></div></div>
+        <p className="muted small">This view reflects current clip records. It is not a complete lifetime export history; recent jobs remain in Activity.</p>
+        {exportedClips.length ? <ul className="sermon-export-list">
+          {exportedClips.map(({ clip, index }) => <li key={clip.id} className="sermon-export-row">
+            <div><strong>{clip.title}</strong><p className="muted small">{fmtSecs(clip.start)} – {fmtSecs(clip.end)}{clip.last_exported_at ? ` · exported ${new Date(clip.last_exported_at).toLocaleString()}` : ''}</p></div>
+            <div className="sermon-export-actions">
+              <a href={fileUrl.clip(clip.output_filename!)} download className="sermon-download-link">Download MP4</a>
+              <button type="button" className="secondary" onClick={() => onTrim(clip, index)}>Edit / Trim</button>
+            </div>
+          </li>)}</ul> : <p className="empty">No current exported clips yet. Open Clips to prepare one.</p>}
+      </section>}
     </div>
   )
 }
