@@ -5,14 +5,15 @@ import datetime as dt
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
 from app.config import settings
 from app.identity import get_user
 from app.routers.auth import require_admin
-from app.services import captions, clip_overrides, clip_selection, ingest, jobs, manual_clips, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
+from app.services import captions, clip_import, clip_metadata, clip_overrides, clip_selection, ingest, jobs, manual_clips, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
 from app.services.transcribe import transcript_path_for
 
 
@@ -247,6 +248,8 @@ def get_clips(name: str) -> dict:
         raise HTTPException(status_code=404, detail="clips.json not found (run select-clips first)")
     data = json.loads(clips_path.read_text())
     current_version = data.get("clips_version")
+    for i, clip in enumerate(data.get("clips", [])):
+        clip_metadata.normalize_for_display(clip, name, current_version, i)
     # Stamp each clip with `user_edits` (the override dict, possibly empty)
     # and `original` (Claude's untouched start/end), and apply any start/end
     # override into the effective clip values so the frontend's existing
@@ -306,6 +309,19 @@ def create_manual_clip(name: str, body: ManualClipIn) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # The same decorated clip shape consumed by Trim and LivePreview.
     return {"clip_index": index, "clip": get_clips(name)["clips"][index]}
+
+
+@router.post("/{name}/clips/import", dependencies=[Depends(require_admin)])
+def import_clip_json(name: str, body: Any = Body(...)) -> dict:
+    transcript_path = _checked_transcript_path(name)
+    try:
+        result = clip_import.import_clips(name, transcript_path, body)
+    except clip_import.ClipImportError as exc:
+        raise HTTPException(status_code=400, detail="Import rejected:\n" + "\n".join(exc.errors)) from exc
+    listed = get_clips(name)["clips"]
+    return {"imported": result["imported"],
+            "duplicates_skipped": result["duplicates_skipped"],
+            "clips": [listed[index] for index in result["indices"]]}
 
 
 class ClipOverridesIn(BaseModel):

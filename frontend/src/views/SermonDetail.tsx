@@ -3,6 +3,8 @@ import { api } from '../api'
 import type { Clip, ClipsFile, Job, Sermon, TranscriptStatus } from '../types'
 import { TranscriptEditor } from './TranscriptEditor'
 import { manualClipDuration, parseManualClipTime, submitManualClipInputs } from '../manualClipTime'
+import { clipDetailSections, importResultMessage, parseClipImportText } from '../clipImport'
+import type { ImportPreview } from '../clipImport'
 
 type Props = {
   sermon: Sermon
@@ -84,6 +86,11 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const [manualEnd, setManualEnd] = useState('')
   const [manualBusy, setManualBusy] = useState(false)
   const [manualError, setManualError] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importMessage, setImportMessage] = useState<string | null>(null)
   // Full-sermon YouTube URL drives the "watch from this moment" deep link in
   // the Publish view. Stored as a sidecar per sermon; admin edits it once
   // per sermon and volunteers consume the resulting deep link.
@@ -194,6 +201,27 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   }
   const manualStartSeconds = parseManualClipTime(manualStart)
   const manualEndSeconds = parseManualClipTime(manualEnd)
+  const onImportFile = async (file: File | undefined) => {
+    setImportPreview(null)
+    setImportError(null)
+    setImportMessage(null)
+    if (!file) return
+    try { setImportPreview(parseClipImportText(await file.text())) }
+    catch (e) { setImportError(String(e instanceof Error ? e.message : e)) }
+  }
+  const onImportClips = async () => {
+    if (!importPreview) return
+    setImportBusy(true)
+    setImportError(null)
+    try {
+      const result = await api.importClipJson(sermon.name, importPreview.document)
+      setClips(await api.getClips(sermon.name))
+      setImportMessage(importResultMessage(result.imported, result.duplicates_skipped))
+      setImportPreview(null)
+      setImportOpen(false)
+    } catch (e) { setImportError(String(e instanceof Error ? e.message : e)) }
+    finally { setImportBusy(false) }
+  }
   const onRepair = () => api.startRepairTranscript(sermon.name).catch((e) => setError(String(e)))
   const onAlign = () => api.startAlignTranscript(sermon.name).catch((e) => setError(String(e)))
   const transcriptBlocked = transcriptStatus?.human_review_required ?? false
@@ -345,9 +373,9 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
               title="maximum clips Claude may return"
             />
           </div>
-          {sermon.clips_selected ? (
+          {sermon.clips_selected || clips ? (
             <>
-              <span className="badge ok">✓ {sermon.n_clips} clips</span>
+              <span className="badge ok">✓ {clips?.clips.length ?? sermon.n_clips} clips</span>
               <button
                 className="secondary"
                 onClick={onSelectClips}
@@ -378,6 +406,11 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
             disabled={runningKinds.has('select_clips')}>
             {manualOpen ? 'Close manual clip' : 'Add clip manually'}
           </button>}
+          {admin && sermon.transcribed && <button type="button" className="secondary"
+            onClick={() => { setImportOpen(open => !open); setImportError(null) }}
+            disabled={runningKinds.has('select_clips')}>
+            Import JSON
+          </button>}
         </div>
         {prescanJob && (prescanJob.status === 'queued' || prescanJob.status === 'running') && (
           <div className="step">
@@ -405,6 +438,25 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
         </button>
       </form>}
 
+      {admin && sermon.transcribed && importOpen && <section className="clip-import-panel">
+        <h3>Import JSON clips</h3>
+        <input type="file" accept=".json,application/json"
+          onChange={event => { void onImportFile(event.target.files?.[0]) }} />
+        {importPreview && <>
+          <p>{importPreview.clips.length} clip{importPreview.clips.length === 1 ? '' : 's'} found</p>
+          <ul>{importPreview.clips.map((clip, index) =>
+            <li key={index}><strong>{clip.title}</strong> · {fmtSecs(clip.start)} – {fmtSecs(clip.end)}</li>)}</ul>
+          <div className="action-row">
+            <button type="button" className="secondary" onClick={() => { setImportPreview(null); setImportOpen(false) }}>Cancel</button>
+            <button type="button" onClick={onImportClips} disabled={importBusy || runningKinds.has('select_clips')}>
+              {importBusy ? 'Importing…' : `Import ${importPreview.clips.length} clip${importPreview.clips.length === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </>}
+        {importError && <p className="error">{importError}</p>}
+      </section>}
+      {importMessage && <p role="status" className="badge ok">{importMessage}</p>}
+
       {admin && sermon.transcribed && reviewTranscript &&
         <TranscriptEditor source={sermon.name} fullSermon onChanged={() => {
           api.getTranscriptStatus(sermon.name).then(setTranscriptStatus).catch(e => setError(String(e)))
@@ -423,7 +475,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
               )
               const latest = exportJobs.sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
               const exporting = latest && (latest.status === 'queued' || latest.status === 'running')
-              const score = clip.hook_score
+              const score = clip.score ?? clip.hook_score
               return (
                 <li key={i} className="clip-card">
                   <div className="clip-title">
@@ -439,6 +491,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
                   </div>
                   <div className="clip-meta">
                     {fmtSecs(clip.start)} – {fmtSecs(clip.end)} · {(clip.end - clip.start).toFixed(1)}s
+                    {clip.origin !== 'ai' && <span className="badge"> {clip.origin === 'manual' ? 'Manual' : 'JSON import'}</span>}
                     {clip.exported && <span className="badge ok"> ✓ exported</span>}
                     {exporting && <span className="badge"> exporting…</span>}
                     {latest?.status === 'failed' && (
@@ -452,12 +505,8 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
                     )}
                   </div>
                   {exporting && <JobProgress job={latest} />}
-                  {clip.rationale && <div className="clip-rationale">{clip.rationale}</div>}
-                  {clip.hook_rationale && (
-                    <div className="clip-hook-rationale">
-                      <span className="clip-hook-label">Hook:</span> {clip.hook_rationale}
-                    </div>
-                  )}
+                  {clipDetailSections(clip).map(([label, value]) =>
+                    <div key={label} className="clip-rationale"><strong>{label}:</strong> {value}</div>)}
                   <div className="clip-actions">
                     <button onClick={() => onTrim(clip, i)}>
                       {clip.exported ? 'Re-trim & export' : 'Preview / trim / export'}

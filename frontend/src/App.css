@@ -339,6 +339,17 @@ input[type="number"] {
 .manual-clip-form input { min-width: 125px; }
 .manual-clip-form label:first-of-type input { min-width: 280px; }
 .manual-clip-form .error { flex-basis: 100%; margin: 0; }
+.clip-import-panel {
+  margin: -12px 0 24px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.clip-import-panel h3 { margin: 0 0 10px; }
+.clip-import-panel ul { padding-left: 20px; max-height: 240px; overflow-y: auto; }
+.clip-import-panel li { margin: 6px 0; }
+.clip-import-panel .action-row { display: flex; gap: 8px; }
 
 .clips ul { list-style: none; padding: 0; margin: 0; }
 .clip-card {

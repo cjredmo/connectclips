@@ -34,6 +34,11 @@ export const api = {
       `/sermons/${encodeURIComponent(name)}/clips/manual`,
       { method: 'POST', body: JSON.stringify(clip) },
     ),
+  importClipJson: (name: string, document: unknown) =>
+    jsonFetch<{ imported: number; duplicates_skipped: number; clips: Clip[] }>(
+      `/sermons/${encodeURIComponent(name)}/clips/import`,
+      { method: 'POST', body: JSON.stringify(document) },
+    ),
 
   listJobs: (limit = 200) => jsonFetch<Job[]>(`/jobs?limit=${limit}`),
   getJob: (id: string) => jsonFetch<Job>(`/jobs/${id}`),

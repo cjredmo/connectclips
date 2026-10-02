@@ -66,9 +66,15 @@ export type CaptionStyle = {
 }
 
 export type Clip = {
+  id: string
+  origin: 'manual' | 'json_import' | 'ai'
   start: number          // effective: Claude's value, overridden by user_edits.start if set
   end: number            // effective
   title: string
+  description?: string
+  why_selected?: string
+  hook?: string
+  score?: number
   rationale?: string
   hook_score?: number
   hook_rationale?: string

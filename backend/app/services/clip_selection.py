@@ -225,8 +225,8 @@ def write_json_atomic(path: Path, value: dict) -> None:
             os.unlink(temporary)
 
 
-def _is_manual(clip: dict) -> bool:
-    if clip.get("origin") == "manual":
+def _is_preserved(clip: dict) -> bool:
+    if clip.get("origin") in {"manual", "json_import"}:
         return True
     # The first manual-clip implementation stored exactly these three fields.
     # Other origin-less legacy records remain AI suggestions.
@@ -242,14 +242,16 @@ def write_clips(result: dict) -> Path:
             old_clips = previous.get("clips", [])
             if not isinstance(old_clips, list) or any(not isinstance(clip, dict) for clip in old_clips):
                 raise ValueError("existing clip list is invalid")
-            new_clips = [{**clip, "origin": "ai"} for clip in result["clips"]]
+            new_clips = [{**clip, "id": uuid.uuid4().hex, "origin": "ai"}
+                         for clip in result["clips"]]
             old_overrides = clip_overrides.load_overrides(result["source"])
             kept_overrides = {}
             for old_index, clip in enumerate(old_clips):
-                if not _is_manual(clip):
+                if not _is_preserved(clip):
                     continue
                 kept = dict(clip)
-                kept["origin"] = "manual"
+                if kept.get("origin") is None:
+                    kept["origin"] = "manual"
                 kept.setdefault("id", uuid.uuid4().hex)
                 new_index = len(new_clips)
                 new_clips.append(kept)

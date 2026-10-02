@@ -444,17 +444,17 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     <div className="trim">
       <button className="back" onClick={onBack}>← Back</button>
       <h2 className="trim-title">
-        {clip.hook_score !== undefined && (
+        {(clip.score ?? clip.hook_score) !== undefined && (
           <span
-            className={`hook-score large ${hookScoreClass(clip.hook_score)}`}
+            className={`hook-score large ${hookScoreClass(clip.score ?? clip.hook_score ?? 0)}`}
             title="Hook score: how likely a cold scroller keeps watching past 3 s"
           >
-            {clip.hook_score}
+            {clip.score ?? clip.hook_score}
           </span>
         )}
         {clip.title}
       </h2>
-      <div className="muted">{clip.rationale}</div>
+      {(clip.why_selected ?? clip.rationale) && <div className="muted">{clip.why_selected ?? clip.rationale}</div>}
 
       <div className="player-row">
         <div className="player">
