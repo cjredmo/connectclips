@@ -68,6 +68,11 @@ def init() -> None:
                 progress_percent    REAL,
                 progress_message    TEXT,
                 clips_version       TEXT,
+                caption_style_id    TEXT,
+                caption_style_name  TEXT,
+                caption_style_revision INTEGER,
+                caption_style_hash  TEXT,
+                caption_style_descriptor TEXT,
                 created_at          TEXT NOT NULL,
                 started_at          TEXT,
                 finished_at         TEXT,
@@ -80,6 +85,11 @@ def init() -> None:
             ("progress_message", "ALTER TABLE jobs ADD COLUMN progress_message TEXT"),
             ("clips_version",    "ALTER TABLE jobs ADD COLUMN clips_version TEXT"),
             ("identity_id",      "ALTER TABLE jobs ADD COLUMN identity_id INTEGER"),
+            ("caption_style_id", "ALTER TABLE jobs ADD COLUMN caption_style_id TEXT"),
+            ("caption_style_name", "ALTER TABLE jobs ADD COLUMN caption_style_name TEXT"),
+            ("caption_style_revision", "ALTER TABLE jobs ADD COLUMN caption_style_revision INTEGER"),
+            ("caption_style_hash", "ALTER TABLE jobs ADD COLUMN caption_style_hash TEXT"),
+            ("caption_style_descriptor", "ALTER TABLE jobs ADD COLUMN caption_style_descriptor TEXT"),
         ):
             try:
                 c.execute(ddl)

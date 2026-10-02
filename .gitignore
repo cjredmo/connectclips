@@ -34,6 +34,7 @@ Thumbs.db
 /.npm-cache/
 /.pip-cache/
 /.local-bin/
+/output/
 
 # Local media, generated captions, transcripts, and runtime databases
 *.mp4
@@ -48,6 +49,7 @@ transcript.json
 transcript_edits.json
 transcript_repairs.json
 alignment.json
+caption_styles.json
 clips.json
 source_scan.json
 *.db

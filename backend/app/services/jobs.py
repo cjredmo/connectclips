@@ -31,7 +31,7 @@ from typing import Literal
 
 from app import db
 from app.config import settings
-from app.services import alignment_runner, captions, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
+from app.services import alignment_runner, captions, caption_styles, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
 
 JobKind = Literal["transcribe", "repair_transcript", "align_transcript", "youtube_download", "select_clips", "export_clip", "upload", "prescan_faces"]
 JobStatus = Literal["queued", "running", "done", "failed"]
@@ -41,6 +41,8 @@ _JOB_COLUMNS = (
     "ingested_filename", "clips_path", "clip_index", "start", "end",
     "output_clip_path", "identity_id", "user_login", "user_name",
     "progress_percent", "progress_message", "clips_version",
+    "caption_style_id", "caption_style_name", "caption_style_revision",
+    "caption_style_hash", "caption_style_descriptor",
     "created_at", "started_at", "finished_at", "error",
 )
 
@@ -73,6 +75,11 @@ class Job:
     # clips.json) from "stale" exports made before clips.json was regenerated.
     # NULL for export jobs predating this column, and for non-export kinds.
     clips_version: str | None = None
+    caption_style_id: str | None = None
+    caption_style_name: str | None = None
+    caption_style_revision: int | None = None
+    caption_style_hash: str | None = None
+    caption_style_descriptor: str | None = None
     # who triggered this — populated from Tailscale identity headers when present
     user_login: str | None = None
     user_name: str | None = None
@@ -313,7 +320,7 @@ def create_export_clip_job(
     user_login: str | None = None,
     user_name: str | None = None,
 ) -> Job:
-    captions.get_style(caption_style)  # reject an explicitly unknown key before queuing
+    resolved_style, style_snapshot = caption_styles.snapshot(caption_style)
     src = settings.data_sources_dir / source_name
     if not src.is_file():
         raise FileNotFoundError(f"source not found: {source_name}")
@@ -336,19 +343,26 @@ def create_export_clip_job(
     # fall back to "legacy" so those still produce a deterministic filename.
     clips_version = clips_data.get("clips_version") or "legacy"
     version_short = clips_version[:8]
-    output_name = f"{Path(source_name).stem}-clip-{clip_index}-v{version_short}.mp4"
+    style_suffix = (f"-r{style_snapshot['revision']}-s{style_snapshot['hash'][:8]}"
+                    if style_snapshot["revision"] is not None else "")
+    output_name = f"{Path(source_name).stem}-clip-{clip_index}-v{version_short}{style_suffix}.mp4"
     hook_title = clip.get("title") if include_hook_title else None
     job = _new_job(
         kind="export_clip", source=source_name,
         clip_index=clip_index, start=start, end=end,
         clips_version=clips_version,
+        caption_style_id=style_snapshot["id"],
+        caption_style_name=style_snapshot["name"],
+        caption_style_revision=style_snapshot["revision"],
+        caption_style_hash=style_snapshot["hash"],
+        caption_style_descriptor=json.dumps(style_snapshot["descriptor"], sort_keys=True),
         identity_id=identity_id,
         user_login=user_login, user_name=user_name,
     )
     asyncio.create_task(_run_export_clip(
         job, src, output_name,
         transcript_path if transcript_path.is_file() else None,
-        caption_style,
+        resolved_style,
         hook_title,
         caption_margin_v,
         identity_id,
@@ -649,7 +663,7 @@ def _maybe_chain_prescan(source_name: str, *, user_login: str | None = None, use
 
 async def _run_export_clip(
     job: Job, src: Path, output_name: str,
-    transcript_path: Path | None, caption_style: str | None = None,
+    transcript_path: Path | None, caption_style: captions.CaptionStyle | None = None,
     hook_title: str | None = None,
     caption_margin_v: int | None = None,
     identity_id: int | None = None,

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
-import { captionWordState, currentWordIndex } from '../captionReveal'
+import { currentWordIndex } from '../captionReveal'
 import { captionBottomMargin, chunkCaptionWords, liveCaptionStyle } from '../captionStyles'
 import type { CaptionStyle, Track, TranscriptWord } from '../types'
+import { CaptionLine } from './CaptionLine'
 
 type Props = {
   sermon: string
@@ -214,13 +215,17 @@ export function LivePreview({
     return captionStyle ? chunkCaptionWords(words, captionStyle) : []
   }, [words, captionStyle])
 
-  const currentChunk = useMemo(() => {
+  const currentChunk = (() => {
     for (let i = 0; i < chunks.length; i++) {
       const c = chunks[i]
       const start = c[0].start
       const end = i + 1 < chunks.length
-        ? Math.min(c[c.length - 1].end, chunks[i + 1][0].start)
-        : c[c.length - 1].end
+        ? (captionStyle?.presentation_mode === 'full_chunk_highlight'
+          ? chunks[i + 1][0].start
+          : Math.min(c[c.length - 1].end, chunks[i + 1][0].start))
+        : (captionStyle?.presentation_mode === 'full_chunk_highlight'
+          ? Math.max(c[c.length - 1].end, clipEnd - clipStart)
+          : c[c.length - 1].end)
       if (clipTime >= start && clipTime < end) {
         // Find the current word within the chunk
         const wordIdx = currentWordIndex(c, clipTime)
@@ -228,7 +233,7 @@ export function LivePreview({
       }
     }
     return null
-  }, [chunks, clipTime])
+  })()
 
   // Hook overlay visibility + opacity (fade in 0-0.3s, hold, fade out 1.7-2.0s).
   const hook = useMemo(() => {
@@ -298,20 +303,8 @@ export function LivePreview({
           className="cap-live"
           style={liveCaptionStyle(captionStyle, captionMarginV)}
         >
-          <div className="cp-line">
-            {currentChunk.chunk.map((w, i) => (
-              <span
-                key={i}
-                className={`cp-word ${captionWordState(i, currentChunk.wordIdx)}`}
-              >
-                {/* NBSP, not a regular space: trailing whitespace inside an
-                    `display: inline-block` box gets collapsed at the box
-                    edge, which made captions render as "thatwhereverZion"
-                    with no inter-word gaps. NBSP ( ) is never collapsed. */}
-                {w.text}{i < currentChunk.chunk.length - 1 ? ' ' : ''}
-              </span>
-            ))}
-          </div>
+          <CaptionLine words={currentChunk.chunk} currentIndex={currentChunk.wordIdx}
+            style={captionStyle} />
         </div>
       )}
       {/* Drag handle for caption position. Captures the pointer so a drag that

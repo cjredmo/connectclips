@@ -323,6 +323,22 @@ input[type="number"] {
 .clip-count-controls input[type="number"] {
   width: 56px;
 }
+.manual-clip-form {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: -12px 0 24px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.manual-clip-form h3 { flex-basis: 100%; margin: 0; }
+.manual-clip-form label { display: flex; flex-direction: column; gap: 4px; }
+.manual-clip-form input { min-width: 125px; }
+.manual-clip-form label:first-of-type input { min-width: 280px; }
+.manual-clip-form .error { flex-basis: 100%; margin: 0; }
 
 .clips ul { list-style: none; padding: 0; margin: 0; }
 .clip-card {
@@ -747,6 +763,29 @@ input[type="number"] {
   color: var(--cap-active-color);
   transform: scale(var(--cap-active-scale));
 }
+
+.cs-editor {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.cs-editor-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px 16px;
+  flex: 1 1 370px;
+}
+.cs-editor-form h3, .cs-editor-form .action-row, .cs-editor-form .error {
+  grid-column: 1 / -1;
+}
+.cs-editor-form label { display: flex; flex-direction: column; gap: 4px; }
+.cs-editor-form input[type="checkbox"] { align-self: flex-start; }
+.cs-editor-preview { flex: 0 0 360px; }
+.cs-editor-preview .live-preview { margin-top: 8px; }
 
 /* Hook title overlay (first 2s, fades in/out — opacity is animated by JS).
    Font size is also set inline by JS (auto-fit by title length). */

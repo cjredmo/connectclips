@@ -34,11 +34,11 @@ export type ClipUserEdits = {
 
 export type ZoomLevel = 'tight' | 'medium' | 'wide' | 'stage'
 
-// Version 1 is served by /api/caption-styles from the backend's built-ins.
-// A chunk limit of one means one word at a time; larger limits use progressive
-// reveal with an active word. No preset ID controls presentation behavior.
+export type CaptionPresentation = 'single_word' | 'progressive_chunk' | 'full_chunk_highlight'
+
+// The same versioned descriptor drives built-ins and custom styles.
 export type CaptionStyle = {
-  schema_version: 1
+  schema_version: 2
   key: string
   label: string
   font_name: string
@@ -59,13 +59,17 @@ export type CaptionStyle = {
   background_opacity: number
   preview_highlight_color: string | null
   preview_background_opacity: number | null
+  presentation_mode: CaptionPresentation
+  built_in: boolean
+  editable: boolean
+  revision: number | null
 }
 
 export type Clip = {
   start: number          // effective: Claude's value, overridden by user_edits.start if set
   end: number            // effective
   title: string
-  rationale: string
+  rationale?: string
   hook_score?: number
   hook_rationale?: string
   exported: boolean
@@ -186,9 +190,9 @@ export type Me = {
 
 export type ClipsFile = {
   source: string
-  model: string
+  model?: string
   created_at: string
-  usage: Record<string, number>
+  usage?: Record<string, number>
   clips: Clip[]
 }
 
@@ -252,6 +256,11 @@ export type Job = {
   start: number | null
   end: number | null
   output_clip_path: string | null
+  caption_style_id?: string | null
+  caption_style_name?: string | null
+  caption_style_revision?: number | null
+  caption_style_hash?: string | null
+  caption_style_descriptor?: string | null
   identity_id: number | null
   user_login: string | null
   user_name: string | null

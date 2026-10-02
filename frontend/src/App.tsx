@@ -386,6 +386,7 @@ function App() {
             )}
             {view.name === 'trim' && (
               <Trim
+                admin={me.admin}
                 sermon={view.sermon}
                 clip={view.clip}
                 clipIndex={view.clipIndex}

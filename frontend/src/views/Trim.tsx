@@ -3,6 +3,8 @@ import { api, fileUrl } from '../api'
 import type { CaptionStyle, Clip, Identity, Job, Sermon, ZoomLevel } from '../types'
 import { Publish } from './Publish'
 import { CaptionStylePicker } from './CaptionStylePicker'
+import { CaptionStyleEditor } from './CaptionStyleEditor'
+import { canDeleteStyle, canEditStyle, editableStyleDraft } from '../captionStyles'
 import { LivePreview } from './LivePreview'
 import { TranscriptEditor } from './TranscriptEditor'
 
@@ -11,6 +13,7 @@ type Props = {
   clip: Clip
   clipIndex: number
   onBack: () => void
+  admin: boolean
 }
 
 const NUDGE_STEP = 0.1 // seconds
@@ -59,7 +62,7 @@ function parseTime(input: string): number | null {
   return mins * 60 + secs + sub
 }
 
-export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
+export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   // clip.start / clip.end already have any saved start/end override applied
   // by the backend. The other override fields live in clip.user_edits.
   const userEdits = clip.user_edits ?? {}
@@ -79,6 +82,9 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
   const [showTranscript, setShowTranscript] = useState(false)
   const [transcriptRevision, setTranscriptRevision] = useState(0)
   const [styles, setStyles] = useState<CaptionStyle[]>([])
+  const [fonts, setFonts] = useState<string[]>([])
+  const [editorInitial, setEditorInitial] = useState<CaptionStyle | null>(null)
+  const [managedStyleKey, setManagedStyleKey] = useState('')
   // Backend's default style key. Captured at captionStyles fetch time so the
   // Reset-to-suggestion handler can restore it after wiping overrides.
   const [defaultStyleKey, setDefaultStyleKey] = useState<string>('classic')
@@ -121,6 +127,7 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
     api.captionStyles()
       .then((r) => {
         setStyles(r.styles)
+        setFonts(r.fonts)
         setDefaultStyleKey(r.default)
         // Don't clobber a saved style choice with the backend default.
         if (userEdits.caption_style == null) setStyleKey(r.default)
@@ -172,6 +179,42 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
   const setStartU: typeof setStart = (v) => { setStart(v); markDirty() }
   const setEndU: typeof setEnd = (v) => { setEnd(v); markDirty() }
   const setStyleKeyU: typeof setStyleKey = (v) => { setStyleKey(v); markDirty() }
+  const selectedStyle = styles.find(style => style.key === styleKey)
+  const managedStyle = styles.find(style => style.key === managedStyleKey && !style.built_in) ??
+    styles.find(style => !style.built_in)
+  const refreshStyles = async () => {
+    const response = await api.captionStyles()
+    setStyles(response.styles)
+    setFonts(response.fonts)
+  }
+  const saveStyle = async (name: string, draft: CaptionStyle) => {
+    const saved = editorInitial?.revision == null
+      ? await api.createCaptionStyle(name, draft)
+      : await api.updateCaptionStyle(editorInitial.key, name, draft, editorInitial.revision)
+    await refreshStyles()
+    setStyleKeyU(saved.key)
+    setEditorInitial(null)
+  }
+  const duplicateStyle = async () => {
+    if (!selectedStyle) return
+    setError(null)
+    try {
+      const saved = await api.duplicateCaptionStyle(selectedStyle.key, `Copy of ${selectedStyle.label}`)
+      await refreshStyles()
+      setStyleKeyU(saved.key)
+      setEditorInitial(saved)
+    } catch (e) { setError(String(e)) }
+  }
+  const deleteStyle = async (style: CaptionStyle) => {
+    if (!canDeleteStyle(style) ||
+        !window.confirm(`Delete caption style “${style.label}”? Referencing clips must be changed first.`)) return
+    setError(null)
+    try {
+      await api.deleteCaptionStyle(style.key)
+      await refreshStyles()
+      if (styleKey === style.key) setStyleKeyU(defaultStyleKey)
+    } catch (e) { setError(String(e)) }
+  }
   const setIncludeHookTitleU: typeof setIncludeHookTitle = (v) => { setIncludeHookTitle(v); markDirty() }
   const setCaptionMarginVU: typeof setCaptionMarginV = (v) => { setCaptionMarginV(v); markDirty() }
   const setIdentityIdU: typeof setIdentityId = (v) => { setIdentityId(v); markDirty() }
@@ -474,6 +517,27 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
                   onChange={setStyleKeyU}
                 />
               )}
+              {admin && styles.length > 0 && <>
+                <button type="button" className="secondary"
+                  onClick={() => setEditorInitial(editableStyleDraft(styles[0]))}>+ New style</button>
+                {selectedStyle && <>
+                  <button type="button" className="secondary" onClick={() =>
+                    setEditorInitial(canEditStyle(selectedStyle) ? selectedStyle : editableStyleDraft(selectedStyle))}>
+                    {canEditStyle(selectedStyle) ? 'Edit style' : 'Customize'}
+                  </button>
+                  <button type="button" className="secondary" onClick={duplicateStyle}>Duplicate</button>
+                  {canDeleteStyle(selectedStyle) && <button type="button" className="secondary"
+                    onClick={() => deleteStyle(selectedStyle)}>Delete</button>}
+                </>}
+                {managedStyle && <label>Manage saved style
+                  <select value={managedStyle.key} onChange={e => setManagedStyleKey(e.target.value)}>
+                    {styles.filter(style => !style.built_in).map(style =>
+                      <option key={style.key} value={style.key}>{style.label}</option>)}
+                  </select>
+                  <button type="button" className="secondary"
+                    onClick={() => deleteStyle(managedStyle)}>Delete saved style</button>
+                </label>}
+              </>}
               <label className="hook-toggle" title="Burn the clip's hook title on screen for the first 2s">
                 <input
                   type="checkbox"
@@ -513,6 +577,11 @@ export function Trim({ sermon, clip, clipIndex, onBack }: Props) {
                 {exporting ? 'Exporting…' : 'Export vertical clip'}
               </button>
             </div>
+            {styleKey && styles.length > 0 && !selectedStyle &&
+              <div className="error">Selected caption style is missing. Choose an available style before export.</div>}
+            {editorInitial && <CaptionStyleEditor key={`${editorInitial.key}:${editorInitial.revision ?? 'new'}`}
+              initial={editorInitial} fonts={fonts} onSave={saveStyle}
+              onCancel={() => setEditorInitial(null)} />}
             {error && <div className="error">{error}</div>}
             {exportJob?.status === 'failed' && (
               <div className="error">Export failed: {(exportJob.error ?? '').split('\n')[0]}</div>

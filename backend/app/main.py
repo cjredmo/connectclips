@@ -53,12 +53,13 @@ from app import db
 from app import platform as plat
 from app.config import settings
 from app.routers import auth as auth_router
+from app.routers import caption_styles as caption_styles_router
 from app.routers import jobs as jobs_router
 from app.routers import me as me_router
 from app.routers import publish_targets as publish_targets_router
 from app.routers import sermons as sermons_router
 from app.routers import usage as usage_router
-from app.services import captions
+from app.services import captions, caption_styles as caption_style_store
 
 # repo root → frontend/dist (built SPA)
 _SPA_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -129,11 +130,18 @@ app.include_router(sermons_router.router, prefix=_API_PREFIX)
 app.include_router(jobs_router.router, prefix=_API_PREFIX)
 app.include_router(usage_router.router, prefix=_API_PREFIX)
 app.include_router(publish_targets_router.router, prefix=_API_PREFIX)
+app.include_router(caption_styles_router.router, prefix=_API_PREFIX)
 
 
 @app.get(f"{_API_PREFIX}/caption-styles")
 def caption_styles() -> dict:
-    return {"styles": captions.list_styles(), "default": captions.DEFAULT_STYLE}
+    try:
+        styles = caption_style_store.list_styles()
+    except caption_style_store.StyleStoreError as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"styles": styles, "default": captions.DEFAULT_STYLE,
+            "fonts": list(caption_style_store.FONT_CHOICES)}
 
 
 @app.get(f"{_API_PREFIX}/health")

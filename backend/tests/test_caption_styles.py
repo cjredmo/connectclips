@@ -27,7 +27,11 @@ class CaptionStyleTests(unittest.TestCase):
         for key, values in expected.items():
             with self.subTest(style=key):
                 descriptor = styles[key]
-                self.assertEqual(descriptor["schema_version"], 1)
+                self.assertEqual(descriptor["schema_version"], 2)
+                self.assertEqual(descriptor["presentation_mode"],
+                                 "single_word" if key == "word_pop" else "progressive_chunk")
+                self.assertTrue(descriptor["built_in"])
+                self.assertFalse(descriptor["editable"])
                 self.assertEqual(descriptor["font_name"], "DejaVu Sans")
                 self.assertEqual(descriptor["outline_color"], "#000000")
                 self.assertEqual(tuple(descriptor[field] for field in fields), values)
@@ -61,6 +65,7 @@ class CaptionStyleTests(unittest.TestCase):
         white = generate_ass(words, style="white_block")
         self.assertIn(r"\1c&HFFFFFF&\1a&H10&", white)
         self.assertIn(",2,80,80,777,1", generate_ass(words, style="classic", caption_margin_v=777))
+        self.assertIn(",2,80,80,777,1", generate_ass(words, style="word_pop", caption_margin_v=777))
 
     def test_absent_defaults_and_explicit_unknown_fails(self):
         self.assertIs(get_style(None), get_style("classic"))

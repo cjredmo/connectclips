@@ -8,8 +8,11 @@ export function currentWordIndex(words: TimedWord[], time: number): number {
   return index
 }
 
-export function captionWordState(index: number, currentIndex: number): 'spoken' | 'current' | 'future' {
+export function captionWordState(
+  index: number, currentIndex: number,
+  mode: 'single_word' | 'progressive_chunk' | 'full_chunk_highlight' = 'progressive_chunk',
+): 'spoken' | 'current' | 'future' {
   if (index < currentIndex) return 'spoken'
-  if (index > currentIndex) return 'future'
+  if (index > currentIndex) return mode === 'full_chunk_highlight' ? 'spoken' : 'future'
   return 'current'
 }

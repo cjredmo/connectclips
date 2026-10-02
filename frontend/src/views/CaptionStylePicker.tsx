@@ -28,7 +28,7 @@ export function CaptionStylePicker({ styles, value, onChange }: Props) {
     }
   }, [open])
 
-  const selected = styles.find((s) => s.key === value) ?? styles[0]
+  const selected = styles.find((s) => s.key === value)
 
   return (
     <div className="cs-picker" ref={wrapRef}>
@@ -39,7 +39,9 @@ export function CaptionStylePicker({ styles, value, onChange }: Props) {
         title={selected?.label}
       >
         {selected && <CaptionPreview style={selected} small />}
-        <span className="cs-trigger-label">{selected?.label ?? 'Caption style'}</span>
+        <span className="cs-trigger-label">{selected
+          ? `${selected.label}${selected.revision == null ? '' : ` · r${selected.revision}`}`
+          : `Missing style: ${value}`}</span>
         <span className="cs-caret">▼</span>
       </button>
       {open && (
@@ -54,7 +56,7 @@ export function CaptionStylePicker({ styles, value, onChange }: Props) {
               aria-selected={s.key === value}
             >
               <CaptionPreview style={s} />
-              <div className="cs-option-label">{s.label}</div>
+              <div className="cs-option-label">{s.label}{s.revision == null ? '' : ` · r${s.revision}`}</div>
             </button>
           ))}
         </div>

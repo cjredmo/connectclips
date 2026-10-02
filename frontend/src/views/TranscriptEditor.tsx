@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, fileUrl } from '../api'
 import { findTranscriptMatches } from '../transcriptSearch'
+import { copyEffectiveTranscript } from '../transcriptExport'
 import type { TranscriptEdit, TranscriptResponse, TranscriptSegment } from '../types'
 
 type Selection = { segment: TranscriptSegment; first: number; last: number; edit?: TranscriptEdit }
@@ -14,6 +15,9 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
+  const [copying, setCopying] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [activeMatch, setActiveMatch] = useState(0)
   const segmentNodes = useRef(new Map<number, HTMLParagraphElement>())
   const media = useRef<HTMLVideoElement>(null)
@@ -33,6 +37,9 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
   }
 
   const refresh = async () => setData(await api.getTranscript(source, start, end))
+  useEffect(() => () => {
+    if (copiedTimer.current) clearTimeout(copiedTimer.current)
+  }, [])
   useEffect(() => {
     let active = true
     api.getTranscript(source, start, end)
@@ -88,6 +95,23 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
     finally { setBusy(false) }
   }
 
+  const copyForAi = async () => {
+    setCopying(true)
+    setCopied(false)
+    setError(null)
+    try {
+      const latest = await api.getTranscript(source)
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard unavailable. Use a secure browser context and allow clipboard access.')
+      }
+      await copyEffectiveTranscript(latest, text => navigator.clipboard.writeText(text))
+      setCopied(true)
+      if (copiedTimer.current) clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000)
+    } catch (e) { setError(`Could not copy transcript: ${String(e)}`) }
+    finally { setCopying(false) }
+  }
+
   return (
     <section className={`transcript-editor${fullSermon ? ' full-transcript' : ''}`}>
       <h3>{fullSermon ? 'Review full transcript' : 'Transcript corrections'}</h3>
@@ -100,6 +124,11 @@ export function TranscriptEditor({ source, start, end, onChanged, fullSermon = f
       {data?.repair.human_review_required && <p className="error">Transcript requires review before clip selection.</p>}
       {fullSermon && <>
         <div className="transcript-review-tools">
+          <button type="button" onClick={copyForAi}
+            disabled={!data?.supports_effective_transcript || copying || busy || data.segments.length === 0}>
+            {copying ? 'Copying…' : 'Copy transcript for AI'}
+          </button>
+          {copied && <span role="status" className="muted small">Copied</span>}
           <label htmlFor="transcript-search">Search transcript</label>
           <input id="transcript-search" type="search" value={query}
             onChange={event => { setQuery(event.target.value); setActiveMatch(0) }}

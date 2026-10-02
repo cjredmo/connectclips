@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -19,6 +22,9 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.services.transcript_alignment import load_display_transcript
+
+
+clips_lock = threading.Lock()
 
 
 class ClipCandidate(BaseModel):
@@ -203,14 +209,53 @@ def clips_path_for(source_name: str) -> Path:
     return settings.data_work_dir / Path(source_name).stem / "clips.json"
 
 
+def write_json_atomic(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.stem}-", delete=False) as handle:
+            temporary = handle.name
+            json.dump(value, handle, indent=2, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _is_manual(clip: dict) -> bool:
+    if clip.get("origin") == "manual":
+        return True
+    # The first manual-clip implementation stored exactly these three fields.
+    # Other origin-less legacy records remain AI suggestions.
+    return clip.get("origin") is None and set(clip) == {"title", "start", "end"}
+
+
 def write_clips(result: dict) -> Path:
     out = clips_path_for(result["source"])
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, indent=2))
-    # Wipe any per-clip user edits left over from a previous Claude
-    # generation -- clip indices in the new clips.json don't line up
-    # with what the volunteer was editing, so the cleanest semantics
-    # for "re-suggest clips" is "start fresh".
-    from app.services import clip_overrides
-    clip_overrides.delete_all(result["source"])
+    from app.services import caption_styles, clip_overrides
+    with clips_lock:
+        with caption_styles.reference_lock:
+            previous = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {"clips": []}
+            old_clips = previous.get("clips", [])
+            if not isinstance(old_clips, list) or any(not isinstance(clip, dict) for clip in old_clips):
+                raise ValueError("existing clip list is invalid")
+            new_clips = [{**clip, "origin": "ai"} for clip in result["clips"]]
+            old_overrides = clip_overrides.load_overrides(result["source"])
+            kept_overrides = {}
+            for old_index, clip in enumerate(old_clips):
+                if not _is_manual(clip):
+                    continue
+                kept = dict(clip)
+                kept["origin"] = "manual"
+                kept.setdefault("id", uuid.uuid4().hex)
+                new_index = len(new_clips)
+                new_clips.append(kept)
+                if str(old_index) in old_overrides:
+                    kept_overrides[str(new_index)] = old_overrides[str(old_index)]
+            combined = {**result, "clips": new_clips}
+            write_json_atomic(out, combined)
+            clip_overrides.replace_all(result["source"], kept_overrides)
     return out

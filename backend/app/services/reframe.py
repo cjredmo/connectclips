@@ -1037,7 +1037,7 @@ def export_clip(
     output_name: str,
     transcript_path: Path | None = None,
     progress_cb: ProgressCB | None = None,
-    caption_style: str | None = None,
+    caption_style: str | captions.CaptionStyle | None = None,
     hook_title: str | None = None,
     caption_margin_v: int | None = None,
     identity_id: int | None = None,

@@ -1,20 +1,23 @@
 import type { CSSProperties } from 'react'
-import type { CaptionStyle, TranscriptWord } from './types'
+import type { CaptionPresentation, CaptionStyle, TranscriptWord } from './types'
 
 const FRAME_H = 1920
 const MIN_GAP_FOR_BREAK = 0.55
 const MAX_CHUNK_DURATION = 3.0
 
-export function parseCaptionStylesResponse(value: unknown): { styles: CaptionStyle[]; default: string } {
+export function parseCaptionStylesResponse(value: unknown): { styles: CaptionStyle[]; default: string; fonts: string[] } {
   if (!value || typeof value !== 'object') throw new Error('Invalid caption style response')
-  const response = value as { styles?: unknown; default?: unknown }
-  if (!Array.isArray(response.styles) || typeof response.default !== 'string') {
+  const response = value as { styles?: unknown; default?: unknown; fonts?: unknown }
+  if (!Array.isArray(response.styles) || typeof response.default !== 'string' ||
+      !Array.isArray(response.fonts) || !response.fonts.every(font => typeof font === 'string')) {
     throw new Error('Invalid caption style response')
   }
   for (const item of response.styles) {
     if (!item || typeof item !== 'object') throw new Error('Invalid caption style descriptor')
     const style = item as Record<string, unknown>
-    if (style.schema_version !== 1 ||
+    if (style.schema_version !== 2 ||
+        !['single_word', 'progressive_chunk', 'full_chunk_highlight'].includes(
+          String(style.presentation_mode)) ||
         !['bottom', 'middle', 'top'].includes(String(style.vertical_anchor)) ||
         !['key', 'label', 'font_name', 'primary_color', 'highlight_color',
           'outline_color', 'background_color'].every(field => typeof style[field] === 'string') ||
@@ -23,6 +26,9 @@ export function parseCaptionStylesResponse(value: unknown): { styles: CaptionSty
           'background_opacity'].every(field => typeof style[field] === 'number' &&
             Number.isFinite(style[field])) ||
         typeof style.background_box !== 'boolean' ||
+        typeof style.built_in !== 'boolean' || typeof style.editable !== 'boolean' ||
+        !(style.revision === null || (typeof style.revision === 'number' &&
+          Number.isInteger(style.revision) && style.revision > 0)) ||
         (style.preview_highlight_color != null && typeof style.preview_highlight_color !== 'string') ||
         (style.preview_background_opacity != null &&
          (typeof style.preview_background_opacity !== 'number' ||
@@ -30,11 +36,27 @@ export function parseCaptionStylesResponse(value: unknown): { styles: CaptionSty
       throw new Error('Unsupported caption style descriptor; restart the backend')
     }
   }
-  return response as { styles: CaptionStyle[]; default: string }
+  return response as { styles: CaptionStyle[]; default: string; fonts: string[] }
 }
 
-export function captionPresentation(style: CaptionStyle): 'single_word' | 'progressive_chunk' {
-  return style.max_words_per_chunk === 1 ? 'single_word' : 'progressive_chunk'
+export function editableStyleDraft(base: CaptionStyle): CaptionStyle {
+  return { ...base, key: '', label: `Copy of ${base.label}`,
+    built_in: false, editable: true, revision: null,
+    preview_highlight_color: null, preview_background_opacity: null }
+}
+
+export function canEditStyle(style: CaptionStyle): boolean { return style.editable && !style.built_in }
+export function canDeleteStyle(style: CaptionStyle): boolean { return canEditStyle(style) }
+export function canEditPhraseSize(style: CaptionStyle): boolean {
+  return style.presentation_mode !== 'single_word'
+}
+export function withPresentationMode(style: CaptionStyle, mode: CaptionPresentation): CaptionStyle {
+  return { ...style, presentation_mode: mode,
+    max_words_per_chunk: mode === 'single_word' ? 1 : Math.max(2, style.max_words_per_chunk) }
+}
+
+export function captionPresentation(style: CaptionStyle) {
+  return style.presentation_mode
 }
 
 // Matches backend captions.chunk_words; the style supplies both chunk limits.
@@ -48,7 +70,7 @@ export function chunkCaptionWords(words: TranscriptWord[], style: CaptionStyle):
       const gap = word.start - cur[cur.length - 1].end
       const endsSentence = cur[cur.length - 1].text.endsWith('.') ||
         cur[cur.length - 1].text.endsWith('?') || cur[cur.length - 1].text.endsWith('!')
-      if (cur.length >= style.max_words_per_chunk ||
+      if (cur.length >= (style.presentation_mode === 'single_word' ? 1 : style.max_words_per_chunk) ||
           chars + 1 + word.text.length > style.max_chars_per_chunk ||
           duration >= MAX_CHUNK_DURATION || gap > MIN_GAP_FOR_BREAK || endsSentence) {
         chunks.push(cur)

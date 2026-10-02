@@ -122,13 +122,17 @@ export function History({ onBack }: Props) {
                 <td className="muted small">{fmtDuration(j.started_at, j.finished_at)}</td>
                 <td className="small">
                   {j.kind === 'export_clip' && j.status === 'done' && j.output_clip_path && (
-                    <a
+                    <><a
                       href={fileUrl.clip(j.output_clip_path.split('/').pop() ?? '')}
                       download
                       title="Download the exported MP4 — preserved across clips.json regenerations"
                     >
                       Download
                     </a>
+                    {j.caption_style_name && <div className="muted small">
+                      {j.caption_style_name}{j.caption_style_revision == null ? '' :
+                        ` · revision ${j.caption_style_revision}`}
+                    </div>}</>
                   )}
                 </td>
               </tr>

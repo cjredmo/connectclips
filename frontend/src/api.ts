@@ -1,4 +1,4 @@
-import type { ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
+import type { CaptionStyle, Clip, ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
 import { parseCaptionStylesResponse } from './captionStyles'
 import { normalizeTranscriptResponse, normalizeTranscriptStatus } from './transcriptResponse'
 
@@ -29,6 +29,11 @@ export const api = {
 
   listSermons: () => jsonFetch<Sermon[]>('/sermons'),
   getClips: (name: string) => jsonFetch<ClipsFile>(`/sermons/${encodeURIComponent(name)}/clips`),
+  createManualClip: (name: string, clip: { title: string; start: number; end: number }) =>
+    jsonFetch<{ clip_index: number; clip: Clip }>(
+      `/sermons/${encodeURIComponent(name)}/clips/manual`,
+      { method: 'POST', body: JSON.stringify(clip) },
+    ),
 
   listJobs: (limit = 200) => jsonFetch<Job[]>(`/jobs?limit=${limit}`),
   getJob: (id: string) => jsonFetch<Job>(`/jobs/${id}`),
@@ -145,6 +150,18 @@ export const api = {
     ),
 
   captionStyles: () => jsonFetch<unknown>('/caption-styles').then(parseCaptionStylesResponse),
+  createCaptionStyle: (name: string, descriptor: CaptionStyle) =>
+    jsonFetch<CaptionStyle>('/caption-styles', { method: 'POST', body: JSON.stringify({ name, descriptor }) }),
+  updateCaptionStyle: (key: string, name: string, descriptor: CaptionStyle, expected_revision: number) =>
+    jsonFetch<CaptionStyle>(`/caption-styles/${encodeURIComponent(key)}`, {
+      method: 'PUT', body: JSON.stringify({ name, descriptor, expected_revision }),
+    }),
+  duplicateCaptionStyle: (key: string, name: string) =>
+    jsonFetch<CaptionStyle>(`/caption-styles/${encodeURIComponent(key)}/duplicate`, {
+      method: 'POST', body: JSON.stringify({ name }),
+    }),
+  deleteCaptionStyle: (key: string) =>
+    jsonFetch<{ deleted: boolean }>(`/caption-styles/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   // Per-deployment publish targets -- which channel/page each platform's
   // upload deep-link should point at. GET is open (the Publish view reads

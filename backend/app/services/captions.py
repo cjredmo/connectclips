@@ -32,8 +32,8 @@ def _estimate_lines(chunk_chars: int, font_size: int, video_w: int) -> int:
 class CaptionStyle:
     """Versioned, frontend-friendly caption parameters shared with ASS export.
 
-    A chunk size of one is the single-word presentation mode. Larger chunks
-    progressively reveal words and highlight the current word.
+    The presentation mode determines word visibility; chunk limits determine
+    phrase boundaries independently for both phrase modes.
     """
     key: str
     label: str  # human-readable, shown in the dropdown
@@ -59,14 +59,32 @@ class CaptionStyle:
     # can leave these unset so preview and export use the same values.
     preview_highlight_color: str | None = None
     preview_background_opacity: float | None = None
-    schema_version: int = 1
+    presentation_mode: str = "progressive_chunk"
+    schema_version: int = 2
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1 or not self.key or not self.label:
+        if (self.schema_version != 2 or not isinstance(self.key, str) or
+                not isinstance(self.label, str) or not self.key or not self.label):
             raise ValueError("invalid caption style identity or version")
-        if not self.font_name or any(c in self.font_name for c in ",\r\n{}"):
+        if self.presentation_mode not in {"single_word", "progressive_chunk", "full_chunk_highlight"}:
+            raise ValueError("invalid caption presentation mode")
+        if self.presentation_mode == "single_word":
+            object.__setattr__(self, "max_words_per_chunk", 1)
+        if not isinstance(self.font_name, str) or not self.font_name or any(
+                c in self.font_name for c in ",\r\n{}"):
             raise ValueError("invalid caption font")
-        if any(not re.fullmatch(r"#[0-9A-Fa-f]{6}", color) for color in
+        integers = (self.font_size, self.outline_width, self.shadow_depth,
+                    self.highlight_scale, self.margin_v, self.font_weight,
+                    self.max_words_per_chunk, self.max_chars_per_chunk)
+        if (any(type(value) is not int for value in integers) or
+                type(self.background_box) is not bool or
+                type(self.background_opacity) not in (float, int) or
+                not math.isfinite(self.background_opacity) or
+                (self.preview_background_opacity is not None and
+                 (type(self.preview_background_opacity) not in (float, int) or
+                  not math.isfinite(self.preview_background_opacity)))):
+            raise ValueError("invalid caption style value type")
+        if any(not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color) for color in
                (self.primary_color, self.highlight_color, self.outline_color,
                 self.background_color, *([self.preview_highlight_color]
                                          if self.preview_highlight_color is not None else []))):
@@ -201,6 +219,7 @@ STYLES: dict[str, CaptionStyle] = {
         max_chars_per_chunk=20,
         background_box=False,
         preview_highlight_color="#FFFFFF",
+        presentation_mode="single_word",
     ),
 }
 
@@ -302,7 +321,7 @@ def chunk_words(words: list[Word], style: CaptionStyle) -> list[list[Word]]:
             gap = w.start - cur[-1].end
             ends_sentence = cur[-1].text.endswith((".", "?", "!"))
             if (
-                len(cur) >= style.max_words_per_chunk
+                len(cur) >= (1 if style.presentation_mode == "single_word" else style.max_words_per_chunk)
                 or chars + 1 + len(w.text) > style.max_chars_per_chunk
                 or dur >= MAX_CHUNK_DURATION
                 or gap > MIN_GAP_FOR_BREAK
@@ -412,7 +431,10 @@ def generate_ass(
     # bogus drag value can't push the text off-frame. The 80px floor leaves
     # room for the outline + a small breathing margin from the edge.
     if caption_margin_v is not None:
-        s = replace(s, margin_v=max(80, min(video_h - 80, int(caption_margin_v))))
+        # Drag overrides are measured from the bottom edge in LivePreview,
+        # even when the preset's default anchor is middle or top.
+        s = replace(s, margin_v=max(80, min(video_h - 80, int(caption_margin_v))),
+                    vertical_anchor="bottom")
     chunks = chunk_words(words, s)
 
     # We always use BorderStyle=1 (outline + shadow). When the style asks for a
@@ -469,7 +491,10 @@ def generate_ass(
         # End the chunk at its last word's end, OR at the next chunk's start
         # if that comes first (rare — only if last word's "end" is bogus).
         chunk_end = chunk[-1].end
-        if ci + 1 < len(chunks):
+        if s.presentation_mode == "full_chunk_highlight":
+            chunk_end = (chunk_starts[ci + 1] if ci + 1 < len(chunks)
+                         else max(chunk_end, clip_duration))
+        elif ci + 1 < len(chunks):
             chunk_end = min(chunk_end, chunk_starts[ci + 1])
         if chunk_end <= chunk_start:
             chunk_end = chunk_start + 0.05  # defensive
@@ -497,9 +522,11 @@ def generate_ass(
                         f"{{\\c{_ass_color(s.primary_color)}\\fscx100\\fscy100}}"
                     )
                 elif j > i:
-                    # Hide fill, outline and shadow while retaining the word's
-                    # glyphs in libass layout so the chunk stays centered.
-                    parts.append(f"{{\\alpha&HFF&}}{escaped}")
+                    # Both phrase modes reserve identical layout. Progressive
+                    # reveal hides future glyphs; full-chunk mode shows them
+                    # in the normal base style from the chunk's first event.
+                    alpha = "00" if s.presentation_mode == "full_chunk_highlight" else "FF"
+                    parts.append(f"{{\\alpha&H{alpha}&}}{escaped}")
                 else:
                     parts.append(f"{{\\alpha&H00&}}{escaped}")
             text = " ".join(parts)

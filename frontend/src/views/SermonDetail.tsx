@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Clip, ClipsFile, Job, Sermon, TranscriptStatus } from '../types'
 import { TranscriptEditor } from './TranscriptEditor'
+import { manualClipDuration, parseManualClipTime, submitManualClipInputs } from '../manualClipTime'
 
 type Props = {
   sermon: Sermon
@@ -77,6 +78,12 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const [deleting, setDeleting] = useState(false)
   const [minClips, setMinClips] = useState(3)
   const [maxClips, setMaxClips] = useState(8)
+  const [manualOpen, setManualOpen] = useState(false)
+  const [manualTitle, setManualTitle] = useState('')
+  const [manualStart, setManualStart] = useState('')
+  const [manualEnd, setManualEnd] = useState('')
+  const [manualBusy, setManualBusy] = useState(false)
+  const [manualError, setManualError] = useState<string | null>(null)
   // Full-sermon YouTube URL drives the "watch from this moment" deep link in
   // the Publish view. Stored as a sidecar per sermon; admin edits it once
   // per sermon and volunteers consume the resulting deep link.
@@ -174,6 +181,19 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
   const onTranscribe = () => api.startTranscribe(sermon.name).catch((e) => setError(String(e)))
   const onSelectClips = () =>
     api.startSelectClips(sermon.name, minClips, maxClips).catch((e) => setError(String(e)))
+  const onCreateManualClip = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setManualError(null)
+    setManualBusy(true)
+    try {
+      const created = await submitManualClipInputs(manualTitle, manualStart, manualEnd,
+        payload => api.createManualClip(sermon.name, payload))
+      onTrim(created.clip, created.clip_index)
+    } catch (e) { setManualError(String(e instanceof Error ? e.message : e)) }
+    finally { setManualBusy(false) }
+  }
+  const manualStartSeconds = parseManualClipTime(manualStart)
+  const manualEndSeconds = parseManualClipTime(manualEnd)
   const onRepair = () => api.startRepairTranscript(sermon.name).catch((e) => setError(String(e)))
   const onAlign = () => api.startAlignTranscript(sermon.name).catch((e) => setError(String(e)))
   const transcriptBlocked = transcriptStatus?.human_review_required ?? false
@@ -353,6 +373,11 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
               )}
             </>
           )}
+          {admin && sermon.transcribed && <button type="button" className="secondary"
+            onClick={() => { setManualOpen(open => !open); setManualError(null) }}
+            disabled={runningKinds.has('select_clips')}>
+            {manualOpen ? 'Close manual clip' : 'Add clip manually'}
+          </button>}
         </div>
         {prescanJob && (prescanJob.status === 'queued' || prescanJob.status === 'running') && (
           <div className="step">
@@ -362,6 +387,24 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
         )}
       </section>
 
+      {admin && sermon.transcribed && manualOpen && <form className="manual-clip-form"
+        onSubmit={onCreateManualClip}>
+        <h3>Add clip manually</h3>
+        <label>Title<input type="text" value={manualTitle} maxLength={200} required
+          onChange={event => setManualTitle(event.target.value)} /></label>
+        <label>Start<input type="text" value={manualStart} required placeholder="MM:SS.mmm"
+          onChange={event => setManualStart(event.target.value)} /></label>
+        <label>End<input type="text" value={manualEnd} required placeholder="MM:SS.mmm"
+          onChange={event => setManualEnd(event.target.value)} /></label>
+        {manualStartSeconds !== null && manualEndSeconds !== null &&
+          manualEndSeconds > manualStartSeconds &&
+          <span className="muted small">Duration: {manualClipDuration(manualStartSeconds, manualEndSeconds).toFixed(1)} sec</span>}
+        {manualError && <p className="error">{manualError}</p>}
+        <button type="submit" disabled={manualBusy || runningKinds.has('select_clips')}>
+          {manualBusy ? 'Creating…' : 'Create Clip'}
+        </button>
+      </form>}
+
       {admin && sermon.transcribed && reviewTranscript &&
         <TranscriptEditor source={sermon.name} fullSermon onChanged={() => {
           api.getTranscriptStatus(sermon.name).then(setTranscriptStatus).catch(e => setError(String(e)))
@@ -369,7 +412,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
 
       {clips && (
         <section className="clips">
-          <h2>Suggested clips</h2>
+          <h2>Clips</h2>
           <ul>
             {clips.clips
               .map((clip, i) => ({ clip, i }))
@@ -409,7 +452,7 @@ export function SermonDetail({ sermon, admin, onBack, onTrim, onDeleted }: Props
                     )}
                   </div>
                   {exporting && <JobProgress job={latest} />}
-                  <div className="clip-rationale">{clip.rationale}</div>
+                  {clip.rationale && <div className="clip-rationale">{clip.rationale}</div>}
                   {clip.hook_rationale && (
                     <div className="clip-hook-rationale">
                       <span className="clip-hook-label">Hook:</span> {clip.hook_rationale}

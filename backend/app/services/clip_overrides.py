@@ -12,13 +12,8 @@ A field set to ``null`` means "no override -- use the default" and
 is dropped from the stored dict; an empty stored dict for a clip
 means the clip key is removed from the file entirely.
 
-When ``select_clips`` regenerates ``clips.json`` (volunteer rerun
-asks Claude for fresh clips), the overrides become stale because
-clip indices no longer line up with the new clip ranges. The
-``clip_selection.write_clips`` helper deletes this file before
-writing the new clips.json -- simpler than trying to detect index
-collisions and forces a clean slate, which matches what a
-"re-suggest clips" action implies.
+When ``select_clips`` regenerates ``clips.json``, AI clip overrides are
+discarded. Manual clip overrides are reindexed alongside their clips.
 """
 from __future__ import annotations
 
@@ -27,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.services import caption_styles
 
 
 # Override-able fields. Names match the ExportClipRequest body fields in
@@ -66,21 +62,22 @@ def save_override(source_name: str, clip_index: int, fields: dict[str, Any]) -> 
     can clear a single field by sending it as null). If the cleaned dict
     is empty, removes the clip's entry entirely (clean state).
     """
-    cleaned = {k: fields[k] for k in FIELDS if k in fields and fields[k] is not None}
-    overrides = load_overrides(source_name)
-    key = str(clip_index)
-    if cleaned:
-        overrides[key] = cleaned
-    else:
-        overrides.pop(key, None)
-    p = overrides_path_for(source_name)
-    if overrides:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
-    else:
-        # No overrides left for any clip -- delete the file rather than
-        # leave an empty {} on disk.
-        p.unlink(missing_ok=True)
+    with caption_styles.reference_lock:
+        cleaned = {k: fields[k] for k in FIELDS if k in fields and fields[k] is not None}
+        if "caption_style" in cleaned:
+            caption_styles.resolve(cleaned["caption_style"])
+        overrides = load_overrides(source_name)
+        key = str(clip_index)
+        if cleaned:
+            overrides[key] = cleaned
+        else:
+            overrides.pop(key, None)
+        p = overrides_path_for(source_name)
+        if overrides:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
+        else:
+            p.unlink(missing_ok=True)
 
 
 def delete_override(source_name: str, clip_index: int) -> bool:
@@ -97,8 +94,18 @@ def delete_override(source_name: str, clip_index: int) -> bool:
 
 
 def delete_all(source_name: str) -> None:
-    """Wipe every override for this sermon (called when clips.json regenerates)."""
+    """Wipe every override for this sermon."""
     overrides_path_for(source_name).unlink(missing_ok=True)
+
+
+def replace_all(source_name: str, overrides: dict[str, dict[str, Any]]) -> None:
+    """Replace index-keyed overrides after a clip-selection rerun."""
+    p = overrides_path_for(source_name)
+    if overrides:
+        from app.services.clip_selection import write_json_atomic
+        write_json_atomic(p, overrides)
+    else:
+        p.unlink(missing_ok=True)
 
 
 def merge_into_clips(clips: list[dict], overrides: dict[str, dict[str, Any]]) -> None:

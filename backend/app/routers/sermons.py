@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.identity import get_user
 from app.routers.auth import require_admin
-from app.services import captions, clip_overrides, clip_selection, ingest, jobs, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
+from app.services import captions, clip_overrides, clip_selection, ingest, jobs, manual_clips, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
 from app.services.transcribe import transcript_path_for
 
 
@@ -260,6 +260,9 @@ def get_clips(name: str) -> dict:
         # surface a stale export's download path when the current version has
         # nothing exported yet).
         last = jobs.latest_export_for_clip(name, i)
+        if (last and last.clips_version == current_version and
+                last.output_clip_path and Path(last.output_clip_path).exists()):
+            out = Path(last.output_clip_path)
         is_current = out.exists()
         # Stale = there's a previous export but it was made against a different
         # clips_version. The volunteer can still download it, but it represents
@@ -286,6 +289,23 @@ def get_clips(name: str) -> dict:
         clip["last_exported_by_name"] = last.user_name if (last and is_current) else None
         clip["last_exported_at"] = last.finished_at if (last and is_current) else None
     return data
+
+
+class ManualClipIn(BaseModel):
+    title: str
+    start: float
+    end: float
+
+
+@router.post("/{name}/clips/manual", status_code=201, dependencies=[Depends(require_admin)])
+def create_manual_clip(name: str, body: ManualClipIn) -> dict:
+    transcript_path = _checked_transcript_path(name)
+    try:
+        index, _ = manual_clips.create(name, transcript_path, body.title, body.start, body.end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # The same decorated clip shape consumed by Trim and LivePreview.
+    return {"clip_index": index, "clip": get_clips(name)["clips"][index]}
 
 
 class ClipOverridesIn(BaseModel):
@@ -318,7 +338,10 @@ def put_clip_overrides(name: str, clip_index: int, body: ClipOverridesIn) -> dic
     n = len(json.loads(clips_path.read_text()).get("clips", []))
     if clip_index < 0 or clip_index >= n:
         raise HTTPException(status_code=404, detail=f"clip {clip_index} out of range")
-    clip_overrides.save_override(name, clip_index, body.model_dump())
+    try:
+        clip_overrides.save_override(name, clip_index, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"saved": True}
 
 
