@@ -9,6 +9,7 @@ export type ImportClip = {
   why_selected?: string
   hook?: string
   score?: number
+  scripture_reference?: string | null
 }
 
 export type ImportPreview = { document: unknown; clips: ImportClip[] }

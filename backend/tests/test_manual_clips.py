@@ -62,7 +62,26 @@ class ManualClipTests(unittest.TestCase):
         self.assertNotIn("usage", listed)
         self.assertNotIn("hook_score", listed["clips"][0])
         self.assertNotIn("rationale", listed["clips"][0])
+        self.assertIsNone(clip["scripture_reference"])
         self.assertEqual(self.transcript.read_bytes(), self.original_transcript)
+
+    def test_optional_scripture_reference_on_manual_clip(self):
+        app.dependency_overrides[require_admin] = lambda: None
+        self.addCleanup(app.dependency_overrides.pop, require_admin, None)
+        client = TestClient(app)
+        response = client.post("/api/sermons/sample.mp4/clips/manual", json={
+            "title": "Referenced sample", "start": 1, "end": 5,
+            "scripture_reference": "  Ezekiel 8–11  "})
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["clip"]["scripture_reference"], "Ezekiel 8–11")
+        stored = json.loads(clip_selection.clips_path_for("sample.mp4").read_text())["clips"][0]
+        self.assertEqual(stored["scripture_reference"], "Ezekiel 8–11")
+        for value in ({"book": "Ezekiel"}, "A" * 121):
+            invalid = client.post("/api/sermons/sample.mp4/clips/manual", json={
+                "title": "Invalid sample", "start": 6, "end": 8,
+                "scripture_reference": value})
+            self.assertIn(invalid.status_code, (400, 422))
+        self.assertEqual(len(json.loads(clip_selection.clips_path_for("sample.mp4").read_text())["clips"]), 1)
 
     def test_rerun_preserves_manual_clip_and_reindexes_its_overrides(self):
         source = "sample.mp4"
@@ -73,6 +92,7 @@ class ManualClipTests(unittest.TestCase):
                      "rationale": "Older synthetic suggestion"}
         manual = {"id": "stable-manual-id", "origin": "manual",
                   "title": "User clip", "start": 30, "end": 40,
+                  "scripture_reference": "Isaiah 6",
                   "custom_field": {"kept": True}}
         path.write_text(json.dumps({"source": source,
             "clips_version": "old-version", "clips": [old_ai, legacy_ai, manual]}), encoding="utf-8")

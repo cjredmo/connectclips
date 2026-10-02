@@ -33,3 +33,11 @@ test('form payload sends only the normalized title and boundaries', async () => 
   assert.equal(response.clip_index, 0)
   assert.deepEqual(sent, [payload])
 })
+
+test('manual form adds a reference only when supplied', async () => {
+  assert.deepEqual(buildManualClipPayload('Sample', '1', '3', '  Ezekiel 11:16  '),
+    { title: 'Sample', start: 1, end: 3, scripture_reference: 'Ezekiel 11:16' })
+  assert.deepEqual(buildManualClipPayload('Sample', '1', '3', '   '),
+    { title: 'Sample', start: 1, end: 3 })
+  assert.throws(() => buildManualClipPayload('Sample', '1', '3', 'x'.repeat(121)), /120/)
+})

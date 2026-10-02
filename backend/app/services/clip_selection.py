@@ -18,9 +18,10 @@ import uuid
 from pathlib import Path
 
 from anthropic import Anthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
+from app.services.clip_metadata import clean_scripture_reference
 from app.services.transcript_alignment import load_display_transcript
 
 
@@ -34,6 +35,12 @@ class ClipCandidate(BaseModel):
     rationale: str
     hook_score: int = Field(ge=0, le=100)
     hook_rationale: str
+    scripture_reference: str | None = None
+
+    @field_validator("scripture_reference", mode="before")
+    @classmethod
+    def normalize_scripture_reference(cls, value: object) -> str | None:
+        return clean_scripture_reference(value)
 
 
 class ClipSelection(BaseModel):
@@ -113,6 +120,7 @@ For each clip return:
 - rationale: one sentence on why this moment is editorially strong overall
 - hook_score: integer 0–100, predicting how likely a cold scroller is to keep watching past the first 3 seconds
 - hook_rationale: one sentence describing what the FIRST 3 SECONDS of the clip literally say or do, and why that grabs attention (or where it falls short)
+- scripture_reference (optional): a concise passage associated with this clip only when the transcript clearly supports it. Do not invent chapter or verse precision. Omit it or return null when uncertain.
 
 Hook score rubric — use the full range, calibrate carefully:
 - 90–100: extraordinary opening; immediate striking statement that works for any audience. Reserve for genuinely standout hooks.
@@ -181,7 +189,7 @@ def select_clips(
             f"This usually means max_tokens was too low for the requested range; "
             f"try a smaller num_clips_max."
         )
-    raw_clips = [c.model_dump() for c in selection.clips]
+    raw_clips = [c.model_dump(exclude_none=True) for c in selection.clips]
     words = _flat_words(transcript)
     duration = float(transcript.get("duration", 0)) or float("inf")
     clips = [_snap_to_word_boundaries(c, words, duration) for c in raw_clips]

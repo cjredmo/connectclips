@@ -14,7 +14,8 @@ from app.services import clip_metadata, clip_selection
 
 _TIME = re.compile(r"^(?:(\d+):)?(\d+):([0-5]\d)(?:\.(\d{1,3}))?$")
 _SECONDS = re.compile(r"^\d+(?:\.\d{1,3})?$")
-_FIELDS = {"title", "start", "end", "description", "why_selected", "hook", "score"}
+_FIELDS = {"title", "start", "end", "description", "why_selected", "hook", "score",
+           "scripture_reference"}
 _TEXT_LIMITS = {"title": 200, "description": 2000, "why_selected": 2000, "hook": 1000}
 
 
@@ -99,6 +100,13 @@ def validate(document: Any, transcript_path: Path) -> list[dict]:
                 errors.append(f"{prefix}: {field} must be 1–{limit} characters")
             else:
                 clean[field] = value.strip()
+        if "scripture_reference" in item:
+            try:
+                reference = clip_metadata.clean_scripture_reference(item["scripture_reference"])
+                if reference is not None:
+                    clean["scripture_reference"] = reference
+            except ValueError as exc:
+                errors.append(f"{prefix}: {exc}")
         for field in ("start", "end"):
             try:
                 clean[field] = _seconds(item.get(field))

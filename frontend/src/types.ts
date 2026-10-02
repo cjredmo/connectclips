@@ -74,6 +74,7 @@ export type Clip = {
   selection_prompt_name: string | null
   selection_prompt_revision: number | null
   selection_created_at: string | null
+  scripture_reference: string | null
   start: number          // effective: Claude's value, overridden by user_edits.start if set
   end: number            // effective
   title: string

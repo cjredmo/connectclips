@@ -29,11 +29,12 @@ OUTPUT_CONTRACT = """Return ONLY valid JSON compatible with ConnectClips schema_
       "description": "...",
       "why_selected": "...",
       "hook": "...",
-      "score": 85
+      "score": 85,
+      "scripture_reference": null
     }
   ]
 }
-Include title, start, and end for every clip. Also provide a neutral description of what the passage contains, why_selected explaining why it stands alone, a concise account of its opening in hook, and a 0–100 suitability score. Use only timestamps supplied by the transcript and preserve them accurately. Clip boundaries should correspond to the supplied timestamps; avoid beginning or ending mid-thought when possible. Do not invent speech or wording absent from the transcript. Return only the JSON object."""
+Include title, start, and end for every clip. Also provide a neutral description of what the passage contains, why_selected explaining why it stands alone, a concise account of its opening in hook, and a 0–100 suitability score. scripture_reference is optional: include a concise passage actually associated with the clip only when the transcript clearly supports it. Do not invent chapter or verse precision; omit it or use null when uncertain. Use only timestamps supplied by the transcript and preserve them accurately. Clip boundaries should correspond to the supplied timestamps; avoid beginning or ending mid-thought when possible. Do not invent speech or wording absent from the transcript. Return only the JSON object."""
 
 CORE_RULES = """Analyze the timestamped sermon transcript below and identify strong standalone social-video clips. Preserve the speaker's meaning and choose excerpts that a viewer can understand without earlier sermon context. Favor complete thoughts with natural openings and endings. Do not rewrite or fabricate sermon content."""
 

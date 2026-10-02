@@ -95,6 +95,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
   const [manualTitle, setManualTitle] = useState('')
   const [manualStart, setManualStart] = useState('')
   const [manualEnd, setManualEnd] = useState('')
+  const [manualScriptureReference, setManualScriptureReference] = useState('')
   const [manualBusy, setManualBusy] = useState(false)
   const [manualError, setManualError] = useState<string | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -216,7 +217,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
     setManualBusy(true)
     try {
       const created = await submitManualClipInputs(manualTitle, manualStart, manualEnd,
-        payload => api.createManualClip(sermon.name, payload))
+        payload => api.createManualClip(sermon.name, payload), manualScriptureReference)
       onTrim(created.clip, created.clip_index)
     } catch (e) { setManualError(String(e instanceof Error ? e.message : e)) }
     finally { setManualBusy(false) }
@@ -536,6 +537,9 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
           onChange={event => setManualStart(event.target.value)} /></label>
         <label>End<input type="text" value={manualEnd} required placeholder="MM:SS.mmm"
           onChange={event => setManualEnd(event.target.value)} /></label>
+        <label>Scripture reference (optional)<input type="text" value={manualScriptureReference}
+          maxLength={120} placeholder="Book chapter:verse"
+          onChange={event => setManualScriptureReference(event.target.value)} /></label>
         {manualStartSeconds !== null && manualEndSeconds !== null &&
           manualEndSeconds > manualStartSeconds &&
           <span className="muted small">Duration: {manualClipDuration(manualStartSeconds, manualEndSeconds).toFixed(1)} sec</span>}
@@ -619,6 +623,8 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
                       </span>
                     )}
                   </div>
+                  {clip.scripture_reference &&
+                    <div className="clip-rationale">Scripture: {clip.scripture_reference}</div>}
                   {exporting && <JobProgress job={latest} />}
                   {clipDetailSections(clip).map(([label, value]) =>
                     <div key={label} className="clip-rationale"><strong>{label}:</strong> {value}</div>)}

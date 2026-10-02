@@ -6,7 +6,7 @@ test('version 1 JSON produces a multi-clip review preview', () => {
   const preview = parseClipImportText(JSON.stringify({ schema_version: 1, clips: [
     { title: 'First sample', start: '9:18.2', end: '09:45.000',
       description: 'Neutral summary.', why_selected: 'Complete thought.',
-      hook: 'Clear opening.', score: 82 },
+      hook: 'Clear opening.', score: 82, scripture_reference: 'Isaiah 6' },
     { title: 'Second sample', start: '1:09:18.250', end: 4160 },
   ] }))
   assert.equal(preview.clips.length, 2)
@@ -14,6 +14,8 @@ test('version 1 JSON produces a multi-clip review preview', () => {
   assert.equal(preview.clips[1].start, 4158.25)
   assert.equal(preview.clips[0].description, 'Neutral summary.')
   assert.equal(preview.clips[0].score, 82)
+  assert.equal(preview.clips[0].scripture_reference, 'Isaiah 6')
+  assert.equal(preview.clips[1].scripture_reference, undefined)
 })
 
 test('optional metadata displays only present sections', () => {

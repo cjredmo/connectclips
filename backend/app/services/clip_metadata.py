@@ -13,6 +13,21 @@ SELECTION_FIELDS = ("selection_method", "selection_batch_id", "selection_prompt_
                     "selection_prompt_name", "selection_prompt_revision", "selection_created_at")
 SELECTION_METHODS = {"ai_chat", "claude_api", "json_import", "manual"}
 _CUSTOM_PROMPT_ID = re.compile(r"custom:[0-9a-f]{32}\Z")
+SCRIPTURE_REFERENCE_MAX_LENGTH = 120
+
+
+def clean_scripture_reference(value: object) -> str | None:
+    """Normalize optional display text without inferring a reference."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("scripture_reference must be a string or null")
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > SCRIPTURE_REFERENCE_MAX_LENGTH or not all(c.isprintable() for c in cleaned):
+        raise ValueError(f"scripture_reference must be at most {SCRIPTURE_REFERENCE_MAX_LENGTH} printable characters")
+    return cleaned
 
 
 def ai_chat_provenance(source: str, value: object) -> dict:
@@ -66,6 +81,10 @@ def normalize_for_display(clip: dict, source: str, version: str | None, index: i
                                     "claude_api" if stored_origin == "ai" else None)
     for key in SELECTION_FIELDS[1:]:
         clip.setdefault(key, None)
+    try:
+        clip["scripture_reference"] = clean_scripture_reference(clip.get("scripture_reference"))
+    except ValueError:
+        clip["scripture_reference"] = None
     for canonical, legacy in (("why_selected", "rationale"),
                               ("hook", "hook_rationale"), ("score", "hook_score")):
         if canonical not in clip and legacy in clip:

@@ -298,13 +298,15 @@ class ManualClipIn(BaseModel):
     title: str
     start: float
     end: float
+    scripture_reference: str | None = None
 
 
 @router.post("/{name}/clips/manual", status_code=201, dependencies=[Depends(require_admin)])
 def create_manual_clip(name: str, body: ManualClipIn) -> dict:
     transcript_path = _checked_transcript_path(name)
     try:
-        index, _ = manual_clips.create(name, transcript_path, body.title, body.start, body.end)
+        index, _ = manual_clips.create(name, transcript_path, body.title, body.start, body.end,
+                                       body.scripture_reference)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # The same decorated clip shape consumed by Trim and LivePreview.

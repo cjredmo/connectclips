@@ -8,10 +8,10 @@ import math
 import uuid
 from pathlib import Path
 
-from app.services import clip_selection
+from app.services import clip_metadata, clip_selection
 
 def create(source_name: str, transcript_path: Path, title: str,
-           start: float, end: float) -> tuple[int, dict]:
+           start: float, end: float, scripture_reference: str | None = None) -> tuple[int, dict]:
     """Append a clip without changing AI clip records or transcript data."""
     if not isinstance(title, str) or not title.strip() or len(title.strip()) > 200:
         raise ValueError("title must be 1–200 characters")
@@ -32,10 +32,13 @@ def create(source_name: str, transcript_path: Path, title: str,
     if isinstance(duration, (int, float)) and math.isfinite(duration) and duration > 0:
         if end > duration:
             raise ValueError("end time exceeds sermon duration")
+    reference = clip_metadata.clean_scripture_reference(scripture_reference)
 
     path = clip_selection.clips_path_for(source_name)
     clip = {"id": uuid.uuid4().hex, "origin": "manual", "selection_method": "manual",
             "title": title, "start": float(start), "end": float(end)}
+    if reference is not None:
+        clip["scripture_reference"] = reference
     with clip_selection.clips_lock:
         if path.exists():
             try:

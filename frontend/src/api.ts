@@ -5,6 +5,7 @@ import { normalizePromptLibrary } from './clipPrompts'
 import type { ClipPrompt } from './clipPrompts'
 import { importRequest } from './clipSelectionSession'
 import type { PendingAiSelection } from './clipSelectionSession'
+import type { ManualClipPayload } from './manualClipTime'
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`/api${path}`, {
@@ -33,7 +34,7 @@ export const api = {
 
   listSermons: () => jsonFetch<Sermon[]>('/sermons'),
   getClips: (name: string) => jsonFetch<ClipsFile>(`/sermons/${encodeURIComponent(name)}/clips`),
-  createManualClip: (name: string, clip: { title: string; start: number; end: number }) =>
+  createManualClip: (name: string, clip: ManualClipPayload) =>
     jsonFetch<{ clip_index: number; clip: Clip }>(
       `/sermons/${encodeURIComponent(name)}/clips/manual`,
       { method: 'POST', body: JSON.stringify(clip) },

@@ -38,6 +38,8 @@ class ClipPromptTests(unittest.TestCase):
         self.assertIn("schema_version 1", data["output_contract"])
         self.assertIn("ONLY valid JSON", data["output_contract"])
         self.assertIn("why_selected", data["output_contract"])
+        self.assertIn('"scripture_reference": null', data["output_contract"])
+        self.assertIn("omit it or use null when uncertain", data["output_contract"])
         self.assertEqual([item["id"] for item in data["prompts"]], [
             "balanced", "short-punchy", "teaching-theology", "pastoral-application"])
         for prompt in data["prompts"]:

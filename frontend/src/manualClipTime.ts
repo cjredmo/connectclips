@@ -1,4 +1,5 @@
-export type ManualClipPayload = { title: string; start: number; end: number }
+export type ManualClipPayload = { title: string; start: number; end: number;
+  scripture_reference?: string }
 
 export function parseManualClipTime(input: string): number | null {
   const value = input.trim()
@@ -25,7 +26,7 @@ export function manualClipDuration(start: number, end: number): number {
 }
 
 export function buildManualClipPayload(titleInput: string, startInput: string,
-  endInput: string): ManualClipPayload {
+  endInput: string, scriptureReferenceInput = ''): ManualClipPayload {
   const title = titleInput.trim()
   if (!title || title.length > 200) throw new Error('Enter a title of 1–200 characters.')
   const start = parseManualClipTime(startInput)
@@ -34,10 +35,17 @@ export function buildManualClipPayload(titleInput: string, startInput: string,
     throw new Error('Enter time as MM:SS, MM:SS.mmm, or HH:MM:SS.mmm.')
   }
   if (end <= start) throw new Error('End time must be after start time.')
-  return { title, start, end }
+  const scriptureReference = scriptureReferenceInput.trim()
+  if ([...scriptureReference].length > 120 || [...scriptureReference].some(char => {
+    const code = char.codePointAt(0) ?? 0
+    return code < 32 || code === 127
+  })) {
+    throw new Error('Scripture reference must be at most 120 printable characters.')
+  }
+  return { title, start, end, ...(scriptureReference ? { scripture_reference: scriptureReference } : {}) }
 }
 
 export async function submitManualClipInputs<T>(title: string, start: string, end: string,
-  send: (payload: ManualClipPayload) => Promise<T>): Promise<T> {
-  return send(buildManualClipPayload(title, start, end))
+  send: (payload: ManualClipPayload) => Promise<T>, scriptureReference = ''): Promise<T> {
+  return send(buildManualClipPayload(title, start, end, scriptureReference))
 }

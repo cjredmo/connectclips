@@ -14,6 +14,7 @@ from app.config import settings
 from app.main import app
 from app.routers.auth import require_admin
 from app.services import clip_import, clip_metadata, clip_overrides, clip_selection, jobs, manual_clips
+from app.services.clip_selection import ClipCandidate, SYSTEM_PROMPT
 from app.services.transcribe import transcript_path_for
 
 
@@ -74,6 +75,55 @@ class ClipImportTests(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["clips"], stored["clips"])
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["clips_version"], version)
 
+    def test_optional_scripture_reference_in_schema_one_import(self):
+        response = self.import_json([
+            {"title": "Referenced sample", "start": 1, "end": 2,
+             "scripture_reference": "  Ezekiel 11:16  "},
+            {"title": "Unreferenced sample", "start": 3, "end": 4},
+            {"title": "Uncertain sample", "start": 5, "end": 6,
+             "scripture_reference": "  "},
+            {"title": "Null sample", "start": 7, "end": 8,
+             "scripture_reference": None},
+        ])
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = json.loads(self.path.read_text(encoding="utf-8"))["clips"]
+        self.assertEqual(stored[0]["scripture_reference"], "Ezekiel 11:16")
+        self.assertTrue(all("scripture_reference" not in clip for clip in stored[1:]))
+        self.assertTrue(all(clip["selection_method"] == "json_import" for clip in stored))
+        listed = self.client.get("/api/sermons/sample.mp4/clips").json()["clips"]
+        self.assertEqual(listed[0]["scripture_reference"], "Ezekiel 11:16")
+        self.assertTrue(all(clip["scripture_reference"] is None for clip in listed[1:]))
+
+    def test_scripture_reference_validation_is_atomic(self):
+        good = {"title": "Valid sample", "start": 1, "end": 2}
+        for value in ({"book": "Ezekiel"}, ["Ezekiel"], 16, "A" * 121, "Line\nbreak"):
+            with self.subTest(value=value):
+                response = self.import_json([good, {"title": "Invalid sample", "start": 3,
+                                                    "end": 4, "scripture_reference": value}])
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("scripture_reference", response.json()["detail"])
+                self.assertFalse(self.path.exists())
+
+    def test_claude_candidate_accepts_optional_reference_without_changing_other_fields(self):
+        fields = {"start": 1, "end": 2, "title": "Generic sample", "rationale": "Standalone.",
+                  "hook_score": 75, "hook_rationale": "Clear opening."}
+        with_reference = ClipCandidate.model_validate({**fields,
+            "scripture_reference": "  Isaiah 6 / Ezekiel 10  "})
+        self.assertEqual(with_reference.model_dump(exclude_none=True)["scripture_reference"],
+                         "Isaiah 6 / Ezekiel 10")
+        self.assertNotIn("scripture_reference",
+                         ClipCandidate.model_validate(fields).model_dump(exclude_none=True))
+        self.assertNotIn("scripture_reference", ClipCandidate.model_validate({**fields,
+            "scripture_reference": " "}).model_dump(exclude_none=True))
+        with self.assertRaises(ValueError):
+            ClipCandidate.model_validate({**fields, "scripture_reference": ["Isaiah 6"]})
+        clip_selection.write_clips({"source": "sample.mp4", "clips_version": "synthetic-version",
+            "clips": [with_reference.model_dump(exclude_none=True)]})
+        stored = json.loads(self.path.read_text(encoding="utf-8"))["clips"][0]
+        self.assertEqual(stored["scripture_reference"], "Isaiah 6 / Ezekiel 10")
+        self.assertEqual(stored["selection_method"], "claude_api")
+        self.assertIn("Do not invent chapter or verse precision", SYSTEM_PROMPT)
+
     def test_ai_chat_import_uses_snapshot_and_keeps_duplicates_unchanged(self):
         batch = uuid.uuid4().hex
         context = {"source": "sample.mp4", "selection_method": "ai_chat",
@@ -82,13 +132,16 @@ class ClipImportTests(unittest.TestCase):
                    "selection_prompt_revision": None,
                    "selection_created_at": "2026-01-02T03:04:05.000Z"}
         document = {"schema_version": 1, "clips": [
-            {"title": "Sample A", "start": 10, "end": 20},
+            {"title": "Sample A", "start": 10, "end": 20,
+             "scripture_reference": "  Matthew 5  "},
             {"title": "Sample B", "start": 30, "end": 40}]}
         response = self.client.post("/api/sermons/sample.mp4/clips/import",
                                     json={"payload": document, "provenance": context})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["imported"], 2)
         before = json.loads(self.path.read_text(encoding="utf-8"))["clips"]
+        self.assertEqual(before[0]["scripture_reference"], "Matthew 5")
+        self.assertNotIn("scripture_reference", before[1])
         for clip in before:
             self.assertEqual(clip["origin"], "json_import")
             self.assertEqual(clip["selection_method"], "ai_chat")
@@ -180,6 +233,7 @@ class ClipImportTests(unittest.TestCase):
         self.assertEqual([clip["selection_method"] for clip in normalized],
                          ["claude_api", None, None, "manual"])
         self.assertTrue(all(clip["selection_batch_id"] is None for clip in normalized))
+        self.assertTrue(all(clip["scripture_reference"] is None for clip in normalized))
         self.assertEqual(legacy[0].get("selection_method"), None)
 
     def test_all_friendly_timestamp_forms_and_numeric_seconds(self):
