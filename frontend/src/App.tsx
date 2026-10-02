@@ -3,12 +3,11 @@ import { api } from './api'
 import { SermonList } from './views/SermonList'
 import { SermonDetail } from './views/SermonDetail'
 import { Trim } from './views/Trim'
-import { AdminControls } from './views/AdminControls'
+import { AppShell } from './components/AppShell'
 import { History } from './views/History'
 import { Settings } from './views/Settings'
 import { Usage } from './views/Usage'
 import type { Clip, Me, Sermon } from './types'
-import logo from './assets/connectclips-banner.png'
 import './App.css'
 
 type View =
@@ -239,7 +238,7 @@ function App() {
         try {
           const body = JSON.parse(xhr.responseText)
           if (body?.detail) detail = body.detail
-        } catch {}
+        } catch { /* keep the HTTP status as the upload error */ }
         finishServerJob(detail)
         update({ status: 'failed', error: detail, xhr: undefined })
       }
@@ -273,55 +272,13 @@ function App() {
   }, [])
 
   return (
-    <>
-      {/* Full-viewport-width banner. The banner image is the BACKGROUND
-          of this strip (set inline so Vite resolves the imported asset
-          URL). The home-link button overlays the banner-image area on
-          the left ~75 %; UI controls sit on the right side, above the
-          empty white right zone of the banner. The banner-bar lives
-          OUTSIDE .app so it spans the full viewport instead of being
-          capped by the .app max-width. */}
-      <div
-        className="banner-bar"
-        style={{ backgroundImage: `url(${logo})` }}
-      >
-        <button
-          type="button"
-          className="banner-home-zone"
-          onClick={() => navigate({ name: 'list' })}
-          title="Back to sermon list"
-          aria-label="ConnectClips home"
-        />
-        <div className="banner-controls">
-          {/* Identity badge — shows when Tailscale Serve forwarded the request */}
-          {!me.anonymous && (
-            <div className="identity-badge" title={me.login ?? ''}>
-              Hi, <strong>{me.name || me.login}</strong>
-            </div>
-          )}
-          {/* History: admin-only — shows last 200 actions across all users */}
-          {me.admin && view.name !== 'history' && (
-            <button className="secondary" onClick={() => navigate({ name: 'history' })}>
-              Activity
-            </button>
-          )}
-          {/* Usage: admin-only — Claude API spend per sermon + estimated cost */}
-          {me.admin && view.name !== 'usage' && (
-            <button className="secondary" onClick={() => navigate({ name: 'usage' })}>
-              Usage
-            </button>
-          )}
-          {/* Settings: admin-only — publish-target IDs etc. */}
-          {me.admin && view.name !== 'settings' && (
-            <button className="secondary" onClick={() => navigate({ name: 'settings' })}>
-              Settings
-            </button>
-          )}
-          {/* Admin: pre-authorized via Tailscale identity, or unlock via password */}
-          <AdminControls admin={me.admin} identityAdmin={!me.anonymous && me.admin} onChange={refreshMe} />
-        </div>
-      </div>
-    <div className="app">
+    <AppShell
+      active={view.name === 'history' ? 'activity' : view.name === 'usage' || view.name === 'settings' ? view.name : 'sermons'}
+      me={me}
+      onNavigate={(destination) => navigate({ name: destination === 'sermons' ? 'list' : destination === 'activity' ? 'history' : destination })}
+      onAdminChange={refreshMe}
+    >
+    <div className={`app${view.name === 'trim' ? ' app-wide' : ''}`}>
 
       {/* App-global upload banners — one row per active/recent upload, persists across view navigation */}
       {uploads.map((u) => (
@@ -409,7 +366,7 @@ function App() {
         )}
       </main>
     </div>
-    </>
+    </AppShell>
   )
 }
 

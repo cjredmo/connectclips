@@ -26,7 +26,7 @@ export function AddSermon({ onAdded, onUpload, uploadActive }: Props) {
           // clear after a beat so the user sees the success
           setTimeout(() => setYtJob(null), 1500)
         }
-      } catch {}
+      } catch { /* retry polling on the next interval */ }
     }, 2000)
     return () => clearInterval(id)
   }, [ytJob, onAdded])
@@ -57,9 +57,10 @@ export function AddSermon({ onAdded, onUpload, uploadActive }: Props) {
       <h2>Add a sermon</h2>
       <div className="add-row">
         <form className="add-youtube" onSubmit={onYoutubeSubmit}>
-          <label className="muted">From YouTube</label>
+          <label className="muted" htmlFor="sermon-youtube-url">From YouTube</label>
           <div className="input-row">
             <input
+              id="sermon-youtube-url"
               type="text"
               placeholder="https://www.youtube.com/watch?v=…"
               value={url}
@@ -87,9 +88,10 @@ export function AddSermon({ onAdded, onUpload, uploadActive }: Props) {
         </form>
 
         <div className="add-upload">
-          <label className="muted">Upload a file{uploadActive && <> · pick another to add to the queue</>}</label>
+          <label className="muted" htmlFor="sermon-upload-file">Upload a file{uploadActive && <> · pick another to add to the queue</>}</label>
           <div className="input-row">
             <input
+              id="sermon-upload-file"
               ref={fileInput}
               type="file"
               accept="video/*,audio/*"

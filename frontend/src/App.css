@@ -1,18 +1,28 @@
 :root {
-  /* Pure black so the dark banner's black edges blend seamlessly into
-     the page below — the previous #0e1116 had a faint blue tint that
-     made a visible seam at the banner / page boundary. */
-  --bg: #000000;
-  --panel: #161b22;
-  --panel-2: #1f262f;
-  --border: #2a323d;
-  --fg: #e6edf3;
-  --muted: #8b949e;
-  --accent: #2f81f7;
-  --accent-2: #1f6feb;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --err: #f85149;
+  --color-page: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f8fafc;
+  --color-primary: #132d4f;
+  --color-primary-hover: #0f2340;
+  --color-text: #172536;
+  --color-text-muted: #5b6776;
+  --color-border: #d9e0e7;
+  --color-success: #146c43;
+  --color-warning: #8a5b00;
+  --color-error: #b42318;
+
+  /* Compatibility aliases for existing workflow styles. */
+  --bg: var(--color-page);
+  --panel: var(--color-surface);
+  --panel-2: var(--color-surface-subtle);
+  --border: var(--color-border);
+  --fg: var(--color-text);
+  --muted: var(--color-text-muted);
+  --accent: var(--color-primary);
+  --accent-2: var(--color-primary-hover);
+  --ok: var(--color-success);
+  --warn: var(--color-warning);
+  --err: var(--color-error);
 }
 
 * { box-sizing: border-box; }
@@ -22,105 +32,64 @@ body, html, #root {
   background: var(--bg);
   color: var(--fg);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 1.5;
 }
 
 .app {
-  /* Fluid up to 1400 px — picks up most of the horizontal real estate
-     on a 1920-wide laptop/desktop while still leaving small side
-     margins. Below 1400 the layout naturally tracks the viewport. */
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 32px 32px 48px;
+}
+.app-wide { max-width: 1400px; }
+
+.app-header {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.app-header-inner {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 16px 24px;
-}
-
-/* Full-viewport-width banner across the top of the page. The banner
-   image is the BACKGROUND, set inline by App.tsx so Vite can resolve
-   the hashed asset path. `cover` stretches it edge-to-edge; the bar's
-   white background fills any letterboxed area that the image doesn't
-   reach. UI controls sit on the right side at the bottom of the bar,
-   over the banner's empty white right zone. */
-.banner-bar {
-  width: 100%;
-  height: 280px;
-  /* Banner artwork is on a pure-black background, so any letterboxing
-     from `cover` scaling stays invisible. Switching from the original
-     white-banner palette to black means the controls cluster also
-     needs re-coloring (see below). */
-  background-color: #000000;
-  background-repeat: no-repeat;
-  background-size: cover;
-  background-position: center;
-  /* No border — banner edges (#000) and the page bg (#000) match
-     exactly, so a divider line just adds visual noise. */
-  position: relative;
-  display: flex;
-  /* Bottom-align so the controls cluster sits at the base of the
-     banner near the dark page below. */
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 0 24px 16px;
-  gap: 12px;
-  flex-wrap: nowrap;
-}
-/* Invisible button covering the banner-image area. Clicking anywhere
-   over the artwork goes home. The controls cluster sits ABOVE this
-   via z-index so their clicks land first. Explicit no-op hover keeps
-   the global `button:hover { background: #2a323d }` from painting a
-   dark grey overlay across the banner artwork on hover. */
-.banner-home-zone {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 75%;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-  margin: 0;
-}
-.banner-home-zone:hover,
-.banner-home-zone:focus { background: transparent; }
-.banner-home-zone:focus-visible {
-  outline: 2px solid var(--accent, #4f9eff);
-  outline-offset: -3px;
-}
-/* Controls cluster on the right side of the banner. Selectors are
-   intentionally specific — `.banner-bar .banner-controls button` beats
-   the global `button.secondary { background: transparent }` so Activity
-   / Exit buttons read on the white background instead of vanishing. */
-.banner-controls {
-  position: relative;
-  z-index: 1;
+  min-height: 76px;
+  padding: 12px 32px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 15px;
+  gap: 32px;
 }
-/* Controls on a black banner: white text, subtle outlined buttons that
-   match the dark theme without competing with the banner artwork. */
-.banner-bar .banner-controls .identity-badge,
-.banner-bar .banner-controls .identity-badge strong {
-  color: #ffffff;
-  font-size: 15px;
+.app-brand {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+  white-space: nowrap;
 }
-.banner-bar .banner-controls button,
-.banner-bar .banner-controls button.secondary {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  font-size: 15px;
-  padding: 8px 14px;
+.app-brand:hover { background: none; color: var(--color-primary-hover); }
+.app-primary-nav, .app-utility-nav, .app-utilities {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.banner-bar .banner-controls button:hover,
-.banner-bar .banner-controls button.secondary:hover {
-  background: rgba(255, 255, 255, 0.18);
+.app-utilities { margin-left: auto; gap: 16px; min-width: 0; }
+.app-nav-link {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 10px 12px;
+  white-space: nowrap;
 }
-.banner-bar .banner-controls .badge.admin {
-  font-size: 14px;
-  padding: 4px 10px;
+.app-nav-link:hover, .app-nav-link.is-active {
+  background: var(--color-surface-subtle);
+  color: var(--color-primary);
 }
+.app-nav-link.is-active { box-shadow: inset 0 -2px var(--color-primary); }
 
 .identity-badge {
   font-size: 13px;
@@ -139,24 +108,24 @@ body, html, #root {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 10px 12px;
   font-size: 14px;
 }
 .badge.admin {
-  background: rgba(248,81,73,0.14);
-  color: var(--err);
-  border-color: rgba(248,81,73,0.45);
+  background: var(--color-surface-subtle);
+  color: var(--color-primary);
+  border-color: var(--color-border);
   letter-spacing: 0.5px;
   font-weight: 600;
 }
 
 button.danger {
-  background: rgba(248,81,73,0.16);
+  background: var(--color-surface);
   color: var(--err);
-  border-color: rgba(248,81,73,0.45);
+  border-color: var(--err);
 }
-button.danger:hover { background: rgba(248,81,73,0.28); }
+button.danger:hover { background: #fff4f2; }
 
 .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
 .row-actions { margin-top: 8px; }
@@ -181,30 +150,45 @@ button.danger:hover { background: rgba(248,81,73,0.28); }
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
-main { padding-top: 8px; }
+main { min-width: 0; }
 
-h1 { font-size: 22px; margin: 0 0 16px; word-break: break-all; }
-h2 { font-size: 17px; margin: 16px 0 8px; }
+h1 { font-size: clamp(26px, 3vw, 32px); line-height: 1.2; letter-spacing: -0.025em; margin: 0 0 20px; word-break: break-word; color: var(--color-primary); }
+h2 { font-size: 23px; line-height: 1.3; letter-spacing: -0.015em; margin: 24px 0 12px; color: var(--color-primary); }
+h3 { font-size: 19px; line-height: 1.35; color: var(--color-primary); }
+.page-header { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 24px; }
+.page-header h1 { margin-bottom: 4px; }
+.page-header p { margin: 0; font-size: 14px; }
+.page-header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .muted { color: var(--muted); }
-.error { color: var(--err); padding: 8px 12px; background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.4); border-radius: 6px; margin: 8px 0; }
+.error { color: var(--err); padding: 8px 12px; background: #fff4f2; border: 1px solid #f1c6c1; border-radius: 8px; margin: 8px 0; }
 .error-inline { color: var(--err); margin-left: 8px; }
 .empty { color: var(--muted); padding: 24px; text-align: center; }
 
 button {
-  background: var(--panel-2);
+  background: var(--color-surface);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 12px;
+  border-radius: 8px;
+  padding: 8px 14px;
   cursor: pointer;
   font-size: 14px;
+  font-family: inherit;
+  font-weight: 600;
 }
-button:hover { background: #2a323d; }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.primary { background: var(--accent); border-color: var(--accent-2); color: white; }
-button.primary:hover { background: var(--accent-2); }
-button.secondary { background: transparent; }
+button:hover { background: var(--color-surface-subtle); }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+button.primary, button.secondary, button.tertiary, button.danger, button.back { min-height: 42px; }
+button.small { min-height: 0; }
+button.primary { background: var(--color-primary); border-color: var(--color-primary); color: white; }
+button.primary:hover { background: var(--color-primary-hover); }
+button.secondary { background: var(--color-surface); color: var(--color-primary); }
+button.tertiary { background: transparent; border-color: transparent; color: var(--color-primary); }
+button.tertiary:hover { background: var(--color-surface-subtle); }
 button.active { background: var(--accent); border-color: var(--accent-2); color: white; }
 button.back { margin-bottom: 12px; }
 
@@ -212,10 +196,21 @@ input[type="number"] {
   background: var(--panel);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
+  border-radius: 8px;
+  padding: 8px 10px;
   font-size: 14px;
   width: 90px;
+}
+input[type="text"], input[type="password"], input[type="file"], select, textarea {
+  max-width: 100%;
+  font: inherit;
+}
+input[type="text"], input[type="password"], select, textarea {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 9px 12px;
 }
 
 .badge {
@@ -223,21 +218,39 @@ input[type="number"] {
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
-  background: var(--panel-2);
+  background: var(--color-surface-subtle);
   border: 1px solid var(--border);
 }
-.badge.ok { color: var(--ok); border-color: rgba(63,185,80,0.3); }
+.badge.ok { color: var(--ok); border-color: #b8ddc9; }
 .badge.muted { color: var(--muted); }
+.status-badge, .status-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.status-badge-success, .status-done { background: #edf8f1; border-color: #b8ddc9; color: var(--color-success); }
+.status-badge-processing, .status-running { background: #edf3f9; border-color: #c4d2df; color: var(--color-primary); }
+.status-badge-warning { background: #fff8e9; border-color: #ead8ac; color: var(--color-warning); }
+.status-badge-failed, .status-failed { background: #fff4f2; border-color: #f1c6c1; color: var(--color-error); }
+.status-badge-neutral, .status-queued { color: var(--color-text-muted); }
 
 /* Add sermon panel */
 .add-sermon {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 16px;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 32px;
 }
-.add-sermon h2 { margin-top: 0; }
+.add-sermon h2 { margin: 0 0 16px; }
 .add-row {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -245,14 +258,15 @@ input[type="number"] {
 }
 @media (max-width: 700px) { .add-row { grid-template-columns: 1fr; } }
 .add-row label { display: block; margin-bottom: 4px; }
-.add-row .input-row { display: flex; gap: 6px; align-items: center; }
+.add-row .input-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.add-row .input-row input { min-width: 0; }
 .add-row input[type="text"] {
   flex: 1;
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 10px;
+  padding: 10px 12px;
   font-size: 14px;
 }
 .add-row input[type="file"] {
@@ -285,15 +299,29 @@ input[type="number"] {
 .sermon-row {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
-  cursor: pointer;
+  border-radius: 12px;
+  padding: 8px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.sermon-row:hover { border-color: var(--accent-2); background: var(--panel-2); }
-.sermon-row .name { font-weight: 600; word-break: break-all; }
+.sermon-row:hover, .sermon-row:focus-within { border-color: var(--color-primary); }
+.sermon-row-open {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  text-align: left;
+  border: 0;
+  padding: 12px 16px;
+  background: transparent;
+  color: var(--color-text);
+}
+.sermon-row-open:hover { background: var(--color-surface-subtle); }
+.sermon-row .name { display: block; font-size: 17px; font-weight: 650; word-break: break-word; }
 .sermon-row .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .sermon-row .badges { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+.sermon-row .row-actions { margin: 0 8px 0 0; }
 
 /* Sermon detail */
 .pipeline {
@@ -305,8 +333,8 @@ input[type="number"] {
 .step {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 16px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -373,9 +401,9 @@ input[type="number"] {
 .clip-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
 }
 .clip-title { font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .clip-meta { color: var(--muted); font-size: 13px; margin: 4px 0; }
@@ -431,8 +459,8 @@ input[type="number"] {
 .player, .output {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 12px;
+  padding: 16px;
 }
 .trim-controls { margin-top: 10px; }
 .transcript-toggle { margin-top: 16px; }
@@ -533,7 +561,7 @@ input[type="number"] {
   color: var(--fg);
   font-size: 13px;
 }
-.zoom-btn:hover { background: #2a323d; }
+.zoom-btn:hover { background: var(--color-border); }
 .zoom-btn.selected {
   border-color: var(--accent, #4f9eff);
   box-shadow: 0 0 0 2px rgba(79, 158, 255, 0.25);
@@ -606,7 +634,7 @@ input[type="number"] {
   cursor: pointer;
   font-size: 13px;
 }
-.cs-trigger:hover { background: #2a323d; }
+.cs-trigger:hover { background: var(--color-surface-subtle); }
 .cs-trigger-label { white-space: nowrap; }
 .cs-caret { color: var(--muted); font-size: 10px; }
 .cs-popover {
@@ -616,7 +644,7 @@ input[type="number"] {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  box-shadow: 0 8px 24px rgba(19,45,79,0.12);
   padding: 6px;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -1095,7 +1123,6 @@ input[type="number"] {
   max-width: 640px;
   padding-top: 8px;
 }
-.settings-page h2 { margin: 16px 0 24px; }
 .settings-page h3 { margin: 20px 0 8px; font-size: 15px; }
 .settings-page > p,
 .settings-form > p {
@@ -1180,18 +1207,6 @@ input[type="number"] {
   font-variant-numeric: tabular-nums;
 }
 button.small { padding: 4px 8px; font-size: 12px; }
-.status-pill {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  border: 1px solid var(--border);
-}
-.status-done    { color: var(--ok);  border-color: rgba(63,185,80,0.3); }
-.status-failed  { color: var(--err); border-color: rgba(248,81,73,0.3); }
-.status-running { color: var(--accent); border-color: rgba(47,129,247,0.3); }
-.status-queued  { color: var(--muted); }
-
 .status-progress {
   display: flex;
   align-items: center;
@@ -1296,7 +1311,7 @@ button.small { padding: 4px 8px; font-size: 12px; }
   text-decoration: none;
   display: inline-block;
 }
-.publish-btn:hover { background: #2a323d; }
+.publish-btn:hover { background: var(--color-border); }
 .publish-btn.primary { background: var(--accent); border-color: var(--accent-2); color: white; }
 .publish-btn.primary:hover { background: var(--accent-2); }
 .publish-hint { font-size: 12px; margin-bottom: 10px; }
@@ -1328,4 +1343,39 @@ button.small { padding: 4px 8px; font-size: 12px; }
   margin-top: 4px;
   font-size: 11px;
   word-break: break-all;
+}
+
+/* Keep the existing wide Activity table scrollable within the content area. */
+.history { overflow-x: auto; }
+.history-table { min-width: 680px; }
+
+@media (max-width: 1024px) {
+  .app-header-inner { gap: 16px; padding-inline: 24px; }
+  .app { padding: 24px 24px 40px; }
+  .app-utilities { gap: 8px; }
+}
+
+@media (max-width: 800px) {
+  .app-header-inner { flex-wrap: wrap; column-gap: 16px; row-gap: 4px; }
+  .app-utilities { flex: 1 1 100%; margin-left: 0; justify-content: space-between; flex-wrap: wrap; }
+  .app-utility-nav { flex-wrap: wrap; }
+}
+
+@media (max-width: 600px) {
+  .app-header-inner { padding: 12px 16px; }
+  .app-brand { font-size: 20px; }
+  .app-primary-nav { margin-left: auto; }
+  .app-nav-link { padding: 8px; font-size: 11px; }
+  .app-utilities { gap: 8px; }
+  .identity-badge { white-space: normal; }
+  .admin-prompt { max-width: 100%; }
+  .admin-prompt input { min-width: 0; }
+  .app { padding: 24px 16px 40px; }
+  .page-header { align-items: start; flex-direction: column; gap: 12px; }
+  .add-sermon { padding: 16px; }
+  .add-row .input-row { flex-wrap: wrap; }
+  .add-row .input-row input[type="text"] { flex-basis: 100%; }
+  .sermon-row { align-items: stretch; }
+  .sermon-row .row-actions { align-self: center; }
+  .header-row, .clip-actions, .settings-actions { flex-wrap: wrap; }
 }

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import type { Sermon } from '../types'
 import { AddSermon } from './AddSermon'
+import { PageHeader } from '../components/PageHeader'
+import { StatusBadge } from '../components/StatusBadge'
 
 type Props = {
   admin: boolean
@@ -73,8 +75,7 @@ export function SermonList({ admin, onOpen, onDeleted, onUpload, uploadActive }:
     refresh()
   }, [refresh])
 
-  const onDelete = async (e: React.MouseEvent, name: string) => {
-    e.stopPropagation()
+  const onDelete = async (name: string) => {
     if (!window.confirm(`Delete "${name}"?\n\nThis removes the source file, transcript, clips.json, and every exported MP4.`)) return
     setDeleting(name)
     setError(null)
@@ -91,7 +92,7 @@ export function SermonList({ admin, onOpen, onDeleted, onUpload, uploadActive }:
 
   return (
     <div className="sermon-list">
-      <h1>Sermons</h1>
+      <PageHeader title="Sermons" description="Manage source recordings and their clips." />
 
       <AddSermon onAdded={refresh} onUpload={onUpload} uploadActive={uploadActive} />
 
@@ -117,24 +118,26 @@ export function SermonList({ admin, onOpen, onDeleted, onUpload, uploadActive }:
           </div>
           <ul>
             {sortedSermons.map((s) => (
-            <li key={s.name} className="sermon-row" onClick={() => onOpen(s)}>
-              <div className="name">{s.name}</div>
-              <div className="meta">
-                {formatSize(s.size_bytes)} · {new Date(s.modified_at).toLocaleString()}
-              </div>
-              <div className="badges">
-                <span className={s.transcribed ? 'badge ok' : 'badge muted'}>
-                  {s.transcribed ? '✓ transcribed' : 'not transcribed'}
+            <li key={s.name} className="sermon-row">
+              <button type="button" className="sermon-row-open" onClick={() => onOpen(s)}>
+                <span className="name">{s.name}</span>
+                <span className="meta">
+                  {formatSize(s.size_bytes)} · {new Date(s.modified_at).toLocaleString()}
                 </span>
-                <span className={s.clips_selected ? 'badge ok' : 'badge muted'}>
-                  {s.clips_selected ? `✓ ${s.n_clips} clips` : 'no clips yet'}
+                <span className="badges">
+                  <StatusBadge tone={s.transcribed ? 'success' : 'neutral'}>
+                    {s.transcribed ? '✓ transcribed' : 'not transcribed'}
+                  </StatusBadge>
+                  <StatusBadge tone={s.clips_selected ? 'success' : 'neutral'}>
+                    {s.clips_selected ? `✓ ${s.n_clips} clips` : 'no clips yet'}
+                  </StatusBadge>
                 </span>
-              </div>
+              </button>
               {admin && (
                 <div className="row-actions">
                   <button
                     className="danger"
-                    onClick={(e) => onDelete(e, s.name)}
+                    onClick={() => onDelete(s.name)}
                     disabled={deleting === s.name}
                   >
                     {deleting === s.name ? 'Deleting…' : 'Delete'}

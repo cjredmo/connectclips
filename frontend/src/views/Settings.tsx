@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { PageHeader } from '../components/PageHeader'
 
 type Props = {
   onBack: () => void
@@ -57,7 +58,7 @@ export function Settings({ onBack }: Props) {
     <div className="settings-page">
       <button className="secondary" onClick={onBack}>← Back</button>
 
-      <h2>Settings</h2>
+      <PageHeader title="Settings" />
 
       <form onSubmit={onSave} className="settings-form">
         <h3>Publish targets</h3>
