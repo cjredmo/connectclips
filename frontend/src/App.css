@@ -1464,7 +1464,13 @@ button.small { padding: 4px 8px; font-size: 12px; }
 /* Clip editor: the live vertical frame stays visible while the inspector changes task. */
 .editor-workspace { min-width: 0; }
 .editor-header { margin-bottom: 24px; }
+.editor-navigation-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
+.editor-clip-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.editor-save-state { margin-left: auto; font-size: 12px; }
+.editor-save-state button { min-height: 0; padding: 0 3px; border: 0; background: none;
+  color: inherit; font-size: inherit; text-decoration: underline; }
 .editor-header .back { margin-bottom: 18px; }
+.editor-navigation-row .back { margin-bottom: 0; }
 .editor-title-row { display: flex; align-items: center; gap: 16px; }
 .editor-title-row .trim-title { margin: 2px 0 0; line-height: 1.16; }
 .editor-rationale { max-width: 740px; margin: 8px 0 16px; }

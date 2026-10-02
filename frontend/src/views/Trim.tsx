@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, fileUrl } from '../api'
 import type { CaptionStyle, Clip, ClipUserEdits, Identity, Job, Sermon, ZoomLevel } from '../types'
 import { Publish } from './Publish'
@@ -9,12 +9,17 @@ import { deleteClipCaptionStyle } from '../captionStyleDeletion'
 import { LivePreview } from './LivePreview'
 import { TranscriptEditor } from './TranscriptEditor'
 import { hookScoreStyle } from '../hookScore'
+import { ClipOverrideAutosave, type OverrideSaveStatus } from '../clipOverrideAutosave'
+import { adjacentClip } from '../clipNavigation'
 
 type Props = {
   sermon: Sermon
   clip: Clip
   clipIndex: number
+  clipCount: number
   onBack: () => void
+  onNavigateClip: (index: number) => Promise<void>
+  registerBeforeLeave: (flush: (() => Promise<void>) | null) => void
   admin: boolean
 }
 
@@ -53,7 +58,8 @@ function parseTime(input: string): number | null {
   return mins * 60 + secs + sub
 }
 
-export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
+export function Trim({ sermon, clip, clipIndex, clipCount, onBack, onNavigateClip,
+  registerBeforeLeave, admin }: Props) {
   // clip.start / clip.end already have any saved start/end override applied
   // by the backend. The other override fields live in clip.user_edits.
   const userEdits = clip.user_edits ?? {}
@@ -67,9 +73,14 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   // Enter; reverts to last-good if input is invalid.
   const [startText, setStartText] = useState(() => formatTime(clip.start))
   const [endText, setEndText] = useState(() => formatTime(clip.end))
+  const [timeDraftPending, setTimeDraftPending] = useState(false)
+  const startTextDirty = useRef(false)
+  const endTextDirty = useRef(false)
   const [looping, setLooping] = useState(false)
   const [exportJob, setExportJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [saveStatus, setSaveStatus] = useState<OverrideSaveStatus>('idle')
+  const [switchingClip, setSwitchingClip] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
   const [transcriptRevision, setTranscriptRevision] = useState(0)
   const [inspectorSection, setInspectorSection] = useState<'trim' | 'framing' | 'captions' | 'export'>('trim')
@@ -159,28 +170,7 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     }
   }, [sermon.name])
 
-  // userInteracted gates two things:
-  //   1. The "reset margin on style change" effect below -- otherwise a
-  //      saved caption_margin_v would get nuked on mount when the
-  //      captionStyles fetch lands.
-  //   2. The "PUT overrides" effect further down -- we don't want to
-  //      write default-state overrides on mount.
-  // markDirty() flips it true on any user-driven setState.
-  const userInteracted = useRef(false)
   const deletingStyle = useRef(false)
-  const overrideSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const overrideWriteQueue = useRef<Promise<void>>(Promise.resolve())
-  const markDirty = () => { userInteracted.current = true }
-
-  // User-driven setters: identical signatures to the underlying useState
-  // setters, but additionally flip userInteracted so the save + reset
-  // effects know this came from a real volunteer action (not the
-  // captionStyles fetch landing on mount). The system-driven setStyleKey
-  // call inside the captionStyles fetch deliberately uses the plain
-  // setter so it doesn't trip these.
-  const setStartU: typeof setStart = (v) => { setStart(v); markDirty() }
-  const setEndU: typeof setEnd = (v) => { setEnd(v); markDirty() }
-  const setStyleKeyU: typeof setStyleKey = (v) => { setStyleKey(v); markDirty() }
   const selectedStyle = styles.find(style => style.key === styleKey)
   const managedStyle = styles.find(style => style.key === managedStyleKey && !style.built_in) ??
     styles.find(style => !style.built_in)
@@ -197,13 +187,38 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     zoom_level: zoomLevel === 'medium' ? null : zoomLevel,
     lock_camera: lockCamera ? true : null,
   }), [start, end, styleKey, includeHookTitle, captionMarginV, identityId, zoomLevel, lockCamera])
-  const queueOverrideSave = useCallback((edits: ClipUserEdits): Promise<void> => {
-    const write = overrideWriteQueue.current.catch(() => {}).then(async () => {
-      await api.saveClipOverride(sermon.name, clipIndex, edits)
-    })
-    overrideWriteQueue.current = write
-    return write
-  }, [sermon.name, clipIndex])
+  const latestOverride = useRef<ClipUserEdits>(overridePayload())
+  useLayoutEffect(() => { latestOverride.current = overridePayload() }, [overridePayload])
+  const [autosave] = useState(() => new ClipOverrideAutosave(
+    overridePayload(), edits => api.saveClipOverride(sermon.name, clipIndex, edits), setSaveStatus))
+  const flushEditorRef = useRef<() => Promise<void>>(() => autosave.flush())
+  useEffect(() => {
+    registerBeforeLeave(() => flushEditorRef.current())
+    return () => { registerBeforeLeave(null); autosave.dispose() }
+  }, [autosave, registerBeforeLeave])
+  const updateOverride = (patch: ClipUserEdits) => {
+    latestOverride.current = { ...latestOverride.current, ...patch }
+    autosave.schedule(latestOverride.current)
+  }
+  // Only volunteer-driven setters schedule writes. Fetching style defaults or
+  // mounting an editor never creates an override.
+  const setStartU: typeof setStart = value => {
+    const next = typeof value === 'function' ? value(latestOverride.current.start ?? start) : value
+    setStart(next)
+    updateOverride({ start: next })
+  }
+  const setEndU: typeof setEnd = value => {
+    const next = typeof value === 'function' ? value(latestOverride.current.end ?? end) : value
+    setEnd(next)
+    updateOverride({ end: next })
+  }
+  const setStyleKeyU: typeof setStyleKey = value => {
+    const next = typeof value === 'function'
+      ? value(latestOverride.current.caption_style ?? styleKey) : value
+    setStyleKey(next)
+    setCaptionMarginV(null)
+    updateOverride({ caption_style: next, caption_margin_v: null })
+  }
   const closeStyleEditor = () => {
     setEditorInitial(null)
     requestAnimationFrame(() => styleEditorTrigger.current?.focus())
@@ -235,20 +250,17 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     try {
       await deleteClipCaptionStyle(style.key, styleKey, defaultStyleKey, {
         flushCurrentClip: async () => {
-          if (overrideSaveTimer.current) {
-            clearTimeout(overrideSaveTimer.current)
-            overrideSaveTimer.current = null
-            await queueOverrideSave(overridePayload())
-          } else {
-            await overrideWriteQueue.current
-          }
+          await flushEditorRef.current()
         },
-        persistCurrentClip: (key) => queueOverrideSave(overridePayload(key)),
+        persistCurrentClip: key => autosave.saveNow({ ...latestOverride.current,
+          caption_style: key, caption_margin_v: null }),
         references: () => api.captionStyleReferences(style.key, sermon.name, clipIndex),
         selectDefault: () => {
           setStyleKey(defaultStyleKey)
           setCaptionMarginV(null)
-          markDirty()
+          latestOverride.current = { ...latestOverride.current,
+            caption_style: defaultStyleKey, caption_margin_v: null }
+          autosave.markClean(latestOverride.current)
         },
         remove: async () => { await api.deleteCaptionStyle(style.key) },
         refresh: refreshStyles,
@@ -260,42 +272,36 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
       setDeletingStyleKey(null)
     }
   }
-  const setIncludeHookTitleU: typeof setIncludeHookTitle = (v) => { setIncludeHookTitle(v); markDirty() }
-  const setCaptionMarginVU: typeof setCaptionMarginV = (v) => { setCaptionMarginV(v); markDirty() }
-  const setIdentityIdU: typeof setIdentityId = (v) => { setIdentityId(v); markDirty() }
-  const setZoomLevelU: typeof setZoomLevel = (v) => { setZoomLevel(v); markDirty() }
-  const setLockCameraU: typeof setLockCamera = (v) => { setLockCamera(v); markDirty() }
-
-  // Reset caption position override when the volunteer picks a different style.
-  // Different styles have different default positions and chunk sizes; carrying
-  // a previous style's offset usually puts captions in the wrong place. Only
-  // run on user-driven changes -- not on the captionStyles-fetch-driven mount.
-  useEffect(() => {
-    if (!userInteracted.current) return
-    setCaptionMarginV(null)
-  }, [styleKey])
-
-  useEffect(() => {
-    if (!userInteracted.current) return
-    const t = setTimeout(() => {
-      if (overrideSaveTimer.current === t) overrideSaveTimer.current = null
-      if (deletingStyle.current) return
-      queueOverrideSave(overridePayload()).catch((e) => {
-        // Network blip / backend hiccup; the next debounced write will
-        // catch up. Surface in the dev console rather than blocking export.
-        console.warn('saveClipOverride failed', e)
-      })
-    }, 500)
-    overrideSaveTimer.current = t
-    return () => {
-      clearTimeout(t)
-      if (overrideSaveTimer.current === t) overrideSaveTimer.current = null
-    }
-  }, [
-    sermon.name, clipIndex,
-    start, end, styleKey, includeHookTitle, captionMarginV, identityId, zoomLevel,
-    lockCamera, overridePayload, queueOverrideSave,
-  ])
+  const setIncludeHookTitleU: typeof setIncludeHookTitle = value => {
+    const next = typeof value === 'function'
+      ? value(latestOverride.current.include_hook_title ?? includeHookTitle) : value
+    setIncludeHookTitle(next)
+    updateOverride({ include_hook_title: next })
+  }
+  const setCaptionMarginVU: typeof setCaptionMarginV = value => {
+    const next = typeof value === 'function'
+      ? value(latestOverride.current.caption_margin_v ?? captionMarginV) : value
+    setCaptionMarginV(next)
+    updateOverride({ caption_margin_v: next })
+  }
+  const setIdentityIdU: typeof setIdentityId = value => {
+    const next = typeof value === 'function'
+      ? value(latestOverride.current.identity_id ?? identityId) : value
+    setIdentityId(next)
+    updateOverride({ identity_id: next })
+  }
+  const setZoomLevelU: typeof setZoomLevel = value => {
+    const previous = latestOverride.current.zoom_level ?? 'medium'
+    const next = typeof value === 'function' ? value(previous) : value
+    setZoomLevel(next)
+    updateOverride({ zoom_level: next === 'medium' ? null : next })
+  }
+  const setLockCameraU: typeof setLockCamera = value => {
+    const next = typeof value === 'function'
+      ? value(latestOverride.current.lock_camera ?? false) : value
+    setLockCamera(next)
+    updateOverride({ lock_camera: next ? true : null })
+  }
 
   // Position the source video at start when clip changes
   useEffect(() => {
@@ -317,6 +323,8 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   useEffect(() => { setEndText(formatTime(end)) }, [end])
 
   const commitStart = () => {
+    startTextDirty.current = false
+    setTimeDraftPending(endTextDirty.current)
     const parsed = parseTime(startText)
     if (parsed === null) {
       setStartText(formatTime(start))   // revert
@@ -327,6 +335,8 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     setStartText(formatTime(next))
   }
   const commitEnd = () => {
+    endTextDirty.current = false
+    setTimeDraftPending(startTextDirty.current)
     const parsed = parseTime(endText)
     if (parsed === null) {
       setEndText(formatTime(end))
@@ -336,6 +346,28 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     setEndU(next)
     setEndText(formatTime(next))
   }
+  const flushEditor = async () => {
+    // Browser Back may not blur the focused time field. Commit valid typed
+    // values before flushing, using one final payload for both fields.
+    const currentStart = latestOverride.current.start ?? start
+    const currentEnd = latestOverride.current.end ?? end
+    const parsedStart = startTextDirty.current ? parseTime(startText) : null
+    const nextStart = parsedStart === null ? currentStart
+      : Math.max(0, Math.min(parsedStart, currentEnd - 0.1))
+    const parsedEnd = endTextDirty.current ? parseTime(endText) : null
+    const nextEnd = parsedEnd === null ? currentEnd : Math.max(nextStart + 0.1, parsedEnd)
+    const patch: ClipUserEdits = {}
+    if (nextStart !== currentStart) { setStart(nextStart); patch.start = nextStart }
+    if (nextEnd !== currentEnd) { setEnd(nextEnd); patch.end = nextEnd }
+    if (startTextDirty.current) setStartText(formatTime(nextStart))
+    if (endTextDirty.current) setEndText(formatTime(nextEnd))
+    startTextDirty.current = false
+    endTextDirty.current = false
+    setTimeDraftPending(false)
+    if (Object.keys(patch).length) updateOverride(patch)
+    await autosave.flush()
+  }
+  useLayoutEffect(() => { flushEditorRef.current = flushEditor })
 
   // Loop within [start, end] when looping is on
   useEffect(() => {
@@ -388,11 +420,13 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   const onExport = async () => {
     setError(null)
     try {
+      await flushEditorRef.current()
+      const edits = latestOverride.current
       const j = await api.startExportClip(
-        sermon.name, clipIndex, start, end, styleKey, includeHookTitle,
-        captionMarginV, identityId,
-        zoomLevel === 'medium' ? null : zoomLevel,
-        lockCamera,
+        sermon.name, clipIndex, edits.start ?? start, edits.end ?? end,
+        edits.caption_style ?? styleKey, edits.include_hook_title ?? includeHookTitle,
+        edits.caption_margin_v ?? null, edits.identity_id ?? null,
+        edits.zoom_level ?? null, edits.lock_camera ?? false,
       )
       setExportJob(j)
     } catch (e) {
@@ -416,27 +450,47 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     }
   }
 
-  // Wipe this clip's saved overrides + revert local state to Claude's
-  // suggestion (and the system defaults for the non-Claude fields). Plain
-  // setters + clearing userInteracted so the debounced save effect doesn't
-  // immediately re-PUT the just-cleared state.
+  // Wipe saved overrides after earlier writes finish, then establish the
+  // reset values as clean without creating a replacement override.
   const onResetToSuggestion = async () => {
     setError(null)
     try {
+      await flushEditorRef.current()
       await api.resetClipOverride(sermon.name, clipIndex)
     } catch (e) {
       setError(`Reset failed: ${e}`)
       return
     }
-    userInteracted.current = false
-    setStart(clip.original?.start ?? clip.start)
-    setEnd(clip.original?.end ?? clip.end)
+    const originalStart = clip.original?.start ?? clip.start
+    const originalEnd = clip.original?.end ?? clip.end
+    setStart(originalStart)
+    setEnd(originalEnd)
     setStyleKey(defaultStyleKey)
     setIncludeHookTitle(true)
     setCaptionMarginV(null)
     setIdentityId(null)
     setZoomLevel('medium')
     setLockCamera(false)
+    startTextDirty.current = false
+    endTextDirty.current = false
+    setTimeDraftPending(false)
+    setStartText(formatTime(originalStart))
+    setEndText(formatTime(originalEnd))
+    const clean = { start: originalStart, end: originalEnd,
+      caption_style: defaultStyleKey, include_hook_title: true,
+      caption_margin_v: null, identity_id: null, zoom_level: null,
+      lock_camera: null }
+    latestOverride.current = clean
+    autosave.markClean(clean)
+  }
+
+  const moveClip = async (index: number) => {
+    if (switchingClip || index < 0 || index >= clipCount) return
+    setSwitchingClip(true)
+    setError(null)
+    try { await onNavigateClip(index) }
+    catch (e) { setError(`Could not open clip: ${String(e)}`) }
+    finally { setSwitchingClip(false) }
   }
 
   // Decide whether to show the face picker.
@@ -501,7 +555,26 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   return (
     <div className="trim editor-workspace">
       <header className="editor-header">
-        <button className="back" onClick={onBack}>← Back to clips</button>
+        <div className="editor-navigation-row">
+          <button className="back" onClick={onBack}>← Back to clips</button>
+          <div className="editor-clip-navigation">
+            <button type="button" className="secondary"
+              disabled={switchingClip || adjacentClip(clipIndex, clipCount, -1) === null}
+              onClick={() => moveClip(clipIndex - 1)}>← Previous clip</button>
+            <span className="muted small">{clipIndex + 1} of {clipCount}</span>
+            <button type="button" className="secondary"
+              disabled={switchingClip || adjacentClip(clipIndex, clipCount, 1) === null}
+              onClick={() => moveClip(clipIndex + 1)}>Next clip →</button>
+          </div>
+          <span className={`editor-save-state ${saveStatus === 'failed' ? 'error-inline' : 'muted'}`}
+            role={saveStatus === 'failed' ? 'alert' : 'status'} aria-live="polite">
+            {saveStatus === 'failed' ? <>Save failed{' '}
+                <button type="button" className="tertiary"
+                  onClick={() => { void flushEditorRef.current().catch(() => {}) }}>Retry</button></> :
+              timeDraftPending ? 'Unsaved edit' :
+              saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : ''}
+          </span>
+        </div>
         <div className="editor-title-row">
           <div>
             <div className="eyebrow">Clip editor</div>
@@ -579,7 +652,7 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
             <div className="editor-time-field">
               <label htmlFor="clip-start">Start</label>
               <input id="clip-start" type="text" inputMode="decimal" value={startText}
-                onChange={e => setStartText(e.target.value)} onBlur={commitStart}
+                onChange={e => { startTextDirty.current = true; setTimeDraftPending(true); setStartText(e.target.value) }} onBlur={commitStart}
                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                 placeholder="M:SS.cc" />
               <div className="editor-time-actions">
@@ -592,7 +665,7 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
             <div className="editor-time-field">
               <label htmlFor="clip-end">End</label>
               <input id="clip-end" type="text" inputMode="decimal" value={endText}
-                onChange={e => setEndText(e.target.value)} onBlur={commitEnd}
+                onChange={e => { endTextDirty.current = true; setTimeDraftPending(true); setEndText(e.target.value) }} onBlur={commitEnd}
                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                 placeholder="M:SS.cc" />
               <div className="editor-time-actions">
@@ -733,6 +806,9 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
               {currentExportedFilename && <div className="editor-export-complete">
                 <strong>Export ready</strong><a href={fileUrl.clip(currentExportedFilename)} download>Download MP4</a>
               </div>}
+              {exportJob?.status === 'done' && adjacentClip(clipIndex, clipCount, 1) !== null &&
+                <button type="button" className="secondary" disabled={switchingClip}
+                  onClick={() => moveClip(clipIndex + 1)}>Next clip →</button>}
               {showStale && previous && <div className="stale-export-warning">
                 Previous export from a different clip range ({previous.start.toFixed(1)} – {previous.end.toFixed(1)}s,
                 {' '}{(previous.end - previous.start).toFixed(1)}s long) ·{' '}
