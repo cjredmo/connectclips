@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, fileUrl } from '../api'
-import type { CaptionStyle, Clip, Identity, Job, Sermon, ZoomLevel } from '../types'
+import type { CaptionStyle, Clip, ClipUserEdits, Identity, Job, Sermon, ZoomLevel } from '../types'
 import { Publish } from './Publish'
 import { CaptionStylePicker } from './CaptionStylePicker'
 import { CaptionStyleEditor } from './CaptionStyleEditor'
 import { canDeleteStyle, canEditStyle, editableStyleDraft } from '../captionStyles'
+import { deleteClipCaptionStyle } from '../captionStyleDeletion'
 import { LivePreview } from './LivePreview'
 import { TranscriptEditor } from './TranscriptEditor'
 import { hookScoreStyle } from '../hookScore'
@@ -71,10 +72,18 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [showTranscript, setShowTranscript] = useState(false)
   const [transcriptRevision, setTranscriptRevision] = useState(0)
+  const [inspectorSection, setInspectorSection] = useState<'trim' | 'framing' | 'captions' | 'export'>('trim')
+  const [showPlacementGuide, setShowPlacementGuide] = useState(false)
+  const [scriptureDraft, setScriptureDraft] = useState(clip.scripture_reference ?? '')
+  const [savedScripture, setSavedScripture] = useState(clip.scripture_reference ?? '')
+  const [savingScripture, setSavingScripture] = useState(false)
+  const [scriptureError, setScriptureError] = useState<string | null>(null)
   const [styles, setStyles] = useState<CaptionStyle[]>([])
   const [fonts, setFonts] = useState<string[]>([])
   const [editorInitial, setEditorInitial] = useState<CaptionStyle | null>(null)
+  const [deletingStyleKey, setDeletingStyleKey] = useState<string | null>(null)
   const [managedStyleKey, setManagedStyleKey] = useState('')
+  const styleEditorTrigger = useRef<HTMLButtonElement | null>(null)
   // Backend's default style key. Captured at captionStyles fetch time so the
   // Reset-to-suggestion handler can restore it after wiping overrides.
   const [defaultStyleKey, setDefaultStyleKey] = useState<string>('classic')
@@ -158,6 +167,9 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   //      write default-state overrides on mount.
   // markDirty() flips it true on any user-driven setState.
   const userInteracted = useRef(false)
+  const deletingStyle = useRef(false)
+  const overrideSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const overrideWriteQueue = useRef<Promise<void>>(Promise.resolve())
   const markDirty = () => { userInteracted.current = true }
 
   // User-driven setters: identical signatures to the underlying useState
@@ -177,13 +189,32 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
     setStyles(response.styles)
     setFonts(response.fonts)
   }
+  const overridePayload = useCallback((selectedKey = styleKey): ClipUserEdits => ({
+    start, end, caption_style: selectedKey,
+    include_hook_title: includeHookTitle,
+    caption_margin_v: selectedKey === styleKey ? captionMarginV : null,
+    identity_id: identityId,
+    zoom_level: zoomLevel === 'medium' ? null : zoomLevel,
+    lock_camera: lockCamera ? true : null,
+  }), [start, end, styleKey, includeHookTitle, captionMarginV, identityId, zoomLevel, lockCamera])
+  const queueOverrideSave = useCallback((edits: ClipUserEdits): Promise<void> => {
+    const write = overrideWriteQueue.current.catch(() => {}).then(async () => {
+      await api.saveClipOverride(sermon.name, clipIndex, edits)
+    })
+    overrideWriteQueue.current = write
+    return write
+  }, [sermon.name, clipIndex])
+  const closeStyleEditor = () => {
+    setEditorInitial(null)
+    requestAnimationFrame(() => styleEditorTrigger.current?.focus())
+  }
   const saveStyle = async (name: string, draft: CaptionStyle) => {
     const saved = editorInitial?.revision == null
       ? await api.createCaptionStyle(name, draft)
       : await api.updateCaptionStyle(editorInitial.key, name, draft, editorInitial.revision)
     await refreshStyles()
     setStyleKeyU(saved.key)
-    setEditorInitial(null)
+    closeStyleEditor()
   }
   const duplicateStyle = async () => {
     if (!selectedStyle) return
@@ -197,13 +228,37 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   }
   const deleteStyle = async (style: CaptionStyle) => {
     if (!canDeleteStyle(style) ||
-        !window.confirm(`Delete caption style “${style.label}”? Referencing clips must be changed first.`)) return
+        deletingStyle.current || !window.confirm(`Delete caption style “${style.label}”?`)) return
+    deletingStyle.current = true
+    setDeletingStyleKey(style.key)
     setError(null)
     try {
-      await api.deleteCaptionStyle(style.key)
-      await refreshStyles()
-      if (styleKey === style.key) setStyleKeyU(defaultStyleKey)
-    } catch (e) { setError(String(e)) }
+      await deleteClipCaptionStyle(style.key, styleKey, defaultStyleKey, {
+        flushCurrentClip: async () => {
+          if (overrideSaveTimer.current) {
+            clearTimeout(overrideSaveTimer.current)
+            overrideSaveTimer.current = null
+            await queueOverrideSave(overridePayload())
+          } else {
+            await overrideWriteQueue.current
+          }
+        },
+        persistCurrentClip: (key) => queueOverrideSave(overridePayload(key)),
+        references: () => api.captionStyleReferences(style.key, sermon.name, clipIndex),
+        selectDefault: () => {
+          setStyleKey(defaultStyleKey)
+          setCaptionMarginV(null)
+          markDirty()
+        },
+        remove: async () => { await api.deleteCaptionStyle(style.key) },
+        refresh: refreshStyles,
+      })
+    } catch (e) {
+      setError(`Could not delete preset: ${String(e)}`)
+    } finally {
+      deletingStyle.current = false
+      setDeletingStyleKey(null)
+    }
   }
   const setIncludeHookTitleU: typeof setIncludeHookTitle = (v) => { setIncludeHookTitle(v); markDirty() }
   const setCaptionMarginVU: typeof setCaptionMarginV = (v) => { setCaptionMarginV(v); markDirty() }
@@ -223,29 +278,23 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   useEffect(() => {
     if (!userInteracted.current) return
     const t = setTimeout(() => {
-      api.saveClipOverride(sermon.name, clipIndex, {
-        start, end,
-        caption_style: styleKey,
-        include_hook_title: includeHookTitle,
-        caption_margin_v: captionMarginV,
-        identity_id: identityId,
-        // Saving "medium" would be harmless (the backend treats it the same
-        // as no override) but writing null keeps the stored override file
-        // small and makes the Reset-to-suggestion gate honest.
-        zoom_level: zoomLevel === 'medium' ? null : zoomLevel,
-        // false is the default; only persist when explicitly on.
-        lock_camera: lockCamera ? true : null,
-      }).catch((e) => {
+      if (overrideSaveTimer.current === t) overrideSaveTimer.current = null
+      if (deletingStyle.current) return
+      queueOverrideSave(overridePayload()).catch((e) => {
         // Network blip / backend hiccup; the next debounced write will
         // catch up. Surface in the dev console rather than blocking export.
         console.warn('saveClipOverride failed', e)
       })
     }, 500)
-    return () => clearTimeout(t)
+    overrideSaveTimer.current = t
+    return () => {
+      clearTimeout(t)
+      if (overrideSaveTimer.current === t) overrideSaveTimer.current = null
+    }
   }, [
     sermon.name, clipIndex,
     start, end, styleKey, includeHookTitle, captionMarginV, identityId, zoomLevel,
-    lockCamera,
+    lockCamera, overridePayload, queueOverrideSave,
   ])
 
   // Position the source video at start when clip changes
@@ -261,7 +310,10 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   // initial load). When the user is mid-typing we'd already be racing
   // their keystrokes, but commitStart/commitEnd reset to the canonical
   // formatted value on blur, so this is safe.
+  // These effects keep editable text synchronized with numeric nudge/playhead updates.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setStartText(formatTime(start)) }, [start])
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setEndText(formatTime(end)) }, [end])
 
   const commitStart = () => {
@@ -306,7 +358,7 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
       try {
         const updated = await api.getJob(exportJob.id)
         setExportJob(updated)
-      } catch {}
+      } catch { /* A later poll will retry the status request. */ }
     }, 750)
     return () => clearInterval(id)
   }, [exportJob])
@@ -345,6 +397,22 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
       setExportJob(j)
     } catch (e) {
       setError(String(e))
+    }
+  }
+
+  const saveScripture = async (value: string) => {
+    setScriptureError(null)
+    setSavingScripture(true)
+    try {
+      const result = await api.updateClipScriptureReference(
+        sermon.name, clipIndex, clip.id, value.trim() || null,
+      )
+      setSavedScripture(result.scripture_reference ?? '')
+      setScriptureDraft(result.scripture_reference ?? '')
+    } catch (e) {
+      setScriptureError(String(e))
+    } finally {
+      setSavingScripture(false)
     }
   }
 
@@ -431,291 +499,259 @@ export function Trim({ sermon, clip, clipIndex, onBack, admin }: Props) {
   const showStale = !currentExportedFilename && !exporting && previous
 
   return (
-    <div className="trim">
-      <button className="back" onClick={onBack}>← Back</button>
-      <h2 className="trim-title">
-        {(clip.score ?? clip.hook_score) !== undefined && (
-          <span
-            className="hook-score large"
-            style={hookScoreStyle(clip.score ?? clip.hook_score ?? 0)}
-            title="Hook score: how likely a cold scroller keeps watching past 3 s"
-          >
-            {clip.score ?? clip.hook_score}
-          </span>
-        )}
-        {clip.title}
-      </h2>
-      {(clip.why_selected ?? clip.rationale) && <div className="muted">{clip.why_selected ?? clip.rationale}</div>}
-
-      <div className="player-row">
-        <div className="player">
-          <div className="muted">Source video — scrub to find frame, then set in / out</div>
-          <video
-            ref={videoRef}
-            src={fileUrl.source(sermon.name)}
-            controls
-            preload="metadata"
-            style={{ width: '100%', maxWidth: 640, background: 'black' }}
-          />
-          <div className="trim-controls">
-            <div className="time-input">
-              <label>Start</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={startText}
-                onChange={(e) => setStartText(e.target.value)}
-                onBlur={commitStart}
-                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                placeholder="M:SS.cc"
-                size={8}
-              />
-              <button onClick={() => setStartU((s) => Math.max(0, s - NUDGE_STEP))}>−0.1s</button>
-              <button onClick={() => setStartU((s) => s + NUDGE_STEP)}>+0.1s</button>
-              <button onClick={setInToCurrent} title="Set start to current playhead">⤓ playhead</button>
-              <button onClick={() => seekTo(start)} title="Jump video to current start">⏮ go</button>
-            </div>
-            <div className="time-input">
-              <label>End</label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={endText}
-                onChange={(e) => setEndText(e.target.value)}
-                onBlur={commitEnd}
-                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                placeholder="M:SS.cc"
-                size={8}
-              />
-              <button onClick={() => setEndU((s) => Math.max(start + 0.1, s - NUDGE_STEP))}>−0.1s</button>
-              <button onClick={() => setEndU((s) => s + NUDGE_STEP)}>+0.1s</button>
-              <button onClick={setOutToCurrent} title="Set end to current playhead">⤓ playhead</button>
-              <button onClick={() => seekTo(Math.max(0, end - 0.05))} title="Jump video to just before current end">⏭ go</button>
-            </div>
-            <div className="duration">Duration: {formatTime(end - start)}</div>
-            <div className="action-row">
-              <button onClick={playRange}>▶ Play range (loop)</button>
-              <button
-                className={looping ? 'active' : 'secondary'}
-                onClick={() => setLooping((l) => !l)}
-              >
-                Loop: {looping ? 'on' : 'off'}
-              </button>
-              {styles.length > 0 && (
-                <CaptionStylePicker
-                  styles={styles}
-                  value={styleKey}
-                  onChange={setStyleKeyU}
-                />
-              )}
-              {admin && styles.length > 0 && <>
-                <button type="button" className="secondary"
-                  onClick={() => setEditorInitial(editableStyleDraft(styles[0]))}>+ New style</button>
-                {selectedStyle && <>
-                  <button type="button" className="secondary" onClick={() =>
-                    setEditorInitial(canEditStyle(selectedStyle) ? selectedStyle : editableStyleDraft(selectedStyle))}>
-                    {canEditStyle(selectedStyle) ? 'Edit style' : 'Customize'}
-                  </button>
-                  <button type="button" className="secondary" onClick={duplicateStyle}>Duplicate</button>
-                  {canDeleteStyle(selectedStyle) && <button type="button" className="secondary"
-                    onClick={() => deleteStyle(selectedStyle)}>Delete</button>}
-                </>}
-                {managedStyle && <label>Manage saved style
-                  <select value={managedStyle.key} onChange={e => setManagedStyleKey(e.target.value)}>
-                    {styles.filter(style => !style.built_in).map(style =>
-                      <option key={style.key} value={style.key}>{style.label}</option>)}
-                  </select>
-                  <button type="button" className="secondary"
-                    onClick={() => deleteStyle(managedStyle)}>Delete saved style</button>
-                </label>}
-              </>}
-              <label className="hook-toggle" title="Burn the clip's hook title on screen for the first 2s">
-                <input
-                  type="checkbox"
-                  checked={includeHookTitle}
-                  onChange={(e) => setIncludeHookTitleU(e.target.checked)}
-                />
-                Hook title overlay
-              </label>
-              {captionMarginV !== null && (
-                <button
-                  className="secondary"
-                  onClick={() => setCaptionMarginVU(null)}
-                  title="Reset caption position to the style's default"
-                >
-                  Reset position
-                </button>
-              )}
-              {(
-                start !== (clip.original?.start ?? clip.start) ||
-                end !== (clip.original?.end ?? clip.end) ||
-                styleKey !== defaultStyleKey ||
-                !includeHookTitle ||
-                captionMarginV !== null ||
-                identityId !== null ||
-                zoomLevel !== 'medium' ||
-                lockCamera
-              ) && (
-                <button
-                  className="secondary"
-                  onClick={onResetToSuggestion}
-                  title="Discard your edits and revert this clip to Claude's original suggestion"
-                >
-                  Reset to suggestion
-                </button>
-              )}
-              <button className="primary" onClick={onExport} disabled={!!exporting}>
-                {exporting ? 'Exporting…' : 'Export vertical clip'}
-              </button>
-            </div>
-            {styleKey && styles.length > 0 && !selectedStyle &&
-              <div className="error">Selected caption style is missing. Choose an available style before export.</div>}
-            {editorInitial && <CaptionStyleEditor key={`${editorInitial.key}:${editorInitial.revision ?? 'new'}`}
-              initial={editorInitial} fonts={fonts} onSave={saveStyle}
-              onCancel={() => setEditorInitial(null)} />}
-            {error && <div className="error">{error}</div>}
-            {exportJob?.status === 'failed' && (
-              <div className="error">Export failed: {(exportJob.error ?? '').split('\n')[0]}</div>
-            )}
+    <div className="trim editor-workspace">
+      <header className="editor-header">
+        <button className="back" onClick={onBack}>← Back to clips</button>
+        <div className="editor-title-row">
+          <div>
+            <div className="eyebrow">Clip editor</div>
+            <h2 className="trim-title">{clip.title}</h2>
           </div>
+          {(clip.score ?? clip.hook_score) !== undefined && (
+            <span className="hook-score large"
+              style={hookScoreStyle(clip.score ?? clip.hook_score ?? 0)}
+              title="Hook score: how likely a viewer keeps watching past 3 seconds">
+              {clip.score ?? clip.hook_score}
+            </span>
+          )}
         </div>
-
-        <div className="output">
-          <div className="muted preview-label">
-            Preview — drag captions up/down to position
+        {(clip.why_selected ?? clip.rationale) &&
+          <p className="editor-rationale muted">{clip.why_selected ?? clip.rationale}</p>}
+        {admin ? <div className="editor-reference">
+          <label htmlFor="clip-scripture-reference">Scripture reference <span className="muted small">optional</span></label>
+          <div className="editor-reference-row">
+            <input id="clip-scripture-reference" type="text" maxLength={120}
+              value={scriptureDraft} onChange={e => setScriptureDraft(e.target.value)}
+              placeholder="Add a reference if relevant" />
+            <button type="button" className="secondary" disabled={savingScripture || scriptureDraft === savedScripture}
+              onClick={() => saveScripture(scriptureDraft)}>Save</button>
+            {savedScripture && <button type="button" className="secondary" disabled={savingScripture}
+              onClick={() => saveScripture('')}>Clear</button>}
           </div>
-          <LivePreview
-            sermon={sermon.name}
-            clipStart={start}
-            clipEnd={end}
-            transcriptRevision={transcriptRevision}
-            sourceVideoRef={videoRef}
-            captionStyle={styles.find(style => style.key === styleKey) ?? null}
-            captionMarginV={captionMarginV}
-            onCaptionMarginVChange={setCaptionMarginVU}
-            includeHookTitle={includeHookTitle}
-            hookTitle={clip.title}
-            identityId={identityId}
-            zoomLevel={zoomLevel}
-            lockCamera={lockCamera}
-          />
+          {scriptureError && <span className="error" role="alert">{scriptureError}</span>}
+        </div> : savedScripture && <div className="editor-reference-readonly">{savedScripture}</div>}
+      </header>
 
-          <div className="zoom-picker">
-            <div className="muted small">Zoom</div>
-            <div className="zoom-picker-row">
-              {(['tight', 'medium', 'wide', 'stage'] as ZoomLevel[]).map((level) => (
-                <button
-                  key={level}
+      <div className="editor-layout">
+        <section className="editor-preview-workspace" aria-label="Vertical clip preview">
+          <div className="editor-preview-heading">
+            <div><div className="eyebrow">Live output</div><h3>Vertical preview</h3></div>
+            <button type="button" className="editor-guide-toggle secondary" aria-pressed={showPlacementGuide}
+              onClick={() => setShowPlacementGuide(value => !value)}>
+              {showPlacementGuide ? 'Hide placement guide' : 'Placement guide'}
+            </button>
+          </div>
+          <div className="editor-preview-frame">
+            <LivePreview
+              sermon={sermon.name} clipStart={start} clipEnd={end}
+              transcriptRevision={transcriptRevision} sourceVideoRef={videoRef}
+              captionStyle={selectedStyle ?? null} captionMarginV={captionMarginV}
+              onCaptionMarginVChange={setCaptionMarginVU} includeHookTitle={includeHookTitle}
+              hookTitle={clip.title} identityId={identityId} zoomLevel={zoomLevel}
+              lockCamera={lockCamera} showPlacementGuide={showPlacementGuide}
+            />
+          </div>
+          <div className="editor-preview-footer">
+            <span className="muted small">Drag captions to adjust their vertical position.</span>
+            <button type="button" className="secondary" onClick={playRange}>▶ Play selection</button>
+            <button type="button" className="secondary" onClick={() => videoRef.current?.pause()}>Pause</button>
+          </div>
+          <details className="editor-source-drawer">
+            <summary>Source video · scrub and set boundaries</summary>
+            <video ref={videoRef} src={fileUrl.source(sermon.name)} controls preload="metadata"
+              onLoadedMetadata={() => { if (videoRef.current) videoRef.current.currentTime = start }} />
+          </details>
+        </section>
+
+        <aside className="editor-inspector" aria-label="Clip editor controls">
+          <nav className="editor-inspector-nav" aria-label="Editor sections">
+            {([
+              ['trim', 'Trim'], ['framing', 'Framing'], ['captions', 'Captions'], ['export', 'Export'],
+            ] as const).map(([key, label]) => <button key={key} type="button"
+              className={inspectorSection === key ? 'selected' : ''}
+              aria-pressed={inspectorSection === key}
+              onClick={() => setInspectorSection(key)}>{label}</button>)}
+          </nav>
+          {error && <div className="error" role="alert">{error}</div>}
+          {inspectorSection === 'trim' && <section className="editor-panel" aria-label="Trim controls">
+            <div className="eyebrow">01 / Timing</div><h3>Trim the moment</h3>
+            <p className="muted small">Enter M:SS.cc, nudge by a tenth of a second, or set a boundary from the source playhead.</p>
+            <div className="editor-time-field">
+              <label htmlFor="clip-start">Start</label>
+              <input id="clip-start" type="text" inputMode="decimal" value={startText}
+                onChange={e => setStartText(e.target.value)} onBlur={commitStart}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                placeholder="M:SS.cc" />
+              <div className="editor-time-actions">
+                <button type="button" onClick={() => setStartU(s => Math.max(0, s - NUDGE_STEP))}>−0.1s</button>
+                <button type="button" onClick={() => setStartU(s => s + NUDGE_STEP)}>+0.1s</button>
+                <button type="button" onClick={setInToCurrent}>Set from playhead</button>
+                <button type="button" onClick={() => seekTo(start)}>Go to start</button>
+              </div>
+            </div>
+            <div className="editor-time-field">
+              <label htmlFor="clip-end">End</label>
+              <input id="clip-end" type="text" inputMode="decimal" value={endText}
+                onChange={e => setEndText(e.target.value)} onBlur={commitEnd}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                placeholder="M:SS.cc" />
+              <div className="editor-time-actions">
+                <button type="button" onClick={() => setEndU(s => Math.max(start + 0.1, s - NUDGE_STEP))}>−0.1s</button>
+                <button type="button" onClick={() => setEndU(s => s + NUDGE_STEP)}>+0.1s</button>
+                <button type="button" onClick={setOutToCurrent}>Set from playhead</button>
+                <button type="button" onClick={() => seekTo(Math.max(0, end - 0.05))}>Go to end</button>
+              </div>
+            </div>
+            <div className="editor-duration"><span>Selection length</span><strong>{formatTime(end - start)}</strong></div>
+            <div className="editor-inline-actions">
+              <button type="button" className="secondary" onClick={playRange}>▶ Play selection</button>
+              <button type="button" className={looping ? 'active' : 'secondary'}
+                aria-pressed={looping} onClick={() => setLooping(l => !l)}>Loop {looping ? 'on' : 'off'}</button>
+            </div>
+            {(
+              start !== (clip.original?.start ?? clip.start) || end !== (clip.original?.end ?? clip.end) ||
+              styleKey !== defaultStyleKey || !includeHookTitle || captionMarginV !== null ||
+              identityId !== null || zoomLevel !== 'medium' || lockCamera
+            ) && <button type="button" className="secondary editor-reset" onClick={onResetToSuggestion}
+              title="Discard saved clip edits and return to the original suggestion">Reset to suggestion</button>}
+            <button type="button" className="secondary editor-transcript-action"
+              onClick={() => setShowTranscript(value => !value)}>
+              {showTranscript ? 'Hide transcript corrections' : 'Correct transcript text'}
+            </button>
+          </section>}
+
+          {inspectorSection === 'framing' && <section className="editor-panel" aria-label="Framing controls">
+            <div className="eyebrow">02 / Composition</div><h3>Frame the subject</h3>
+            <p className="muted small">Choose how much of the original frame appears in the vertical clip.</p>
+            <div className="zoom-picker">
+              <div className="editor-field-label">Frame size</div>
+              <div className="zoom-picker-row">
+                {(['tight', 'medium', 'wide', 'stage'] as ZoomLevel[]).map(level => <button
+                  key={level} type="button" aria-pressed={zoomLevel === level}
                   className={`zoom-btn ${zoomLevel === level ? 'selected' : ''}`}
                   onClick={() => setZoomLevelU(level)}
-                  title={
-                    level === 'tight' ? 'Closer crop — fills the frame with face and shoulders' :
-                    level === 'medium' ? 'Default — more pastor + background, less perceived jitter' :
-                    level === 'wide' ? 'Widest crop — full body / stage context where the source allows' :
-                    'Full source frame letterboxed onto a blurred copy of itself — no tracking, no jitter'
-                  }
-                >
+                  title={level === 'tight' ? 'Closer crop around the face and shoulders' :
+                    level === 'medium' ? 'Balanced default face crop' :
+                    level === 'wide' ? 'More body and stage context where the source allows' :
+                    'Full source frame on a blurred background; no face tracking'}>
                   {level[0].toUpperCase() + level.slice(1)}
-                </button>
-              ))}
+                </button>)}
+              </div>
+              {zoomLevel === 'stage' && <p className="muted small">Stage shows the full source frame over a blurred fill.</p>}
+              {zoomLevel !== 'stage' && <label className="lock-camera-toggle">
+                <input type="checkbox" checked={lockCamera} onChange={e => setLockCameraU(e.target.checked)} />
+                <span className="switch" aria-hidden="true"><span className="switch-thumb" /></span>
+                <span>Lock camera <small className="muted">(hold the crop still)</small></span>
+              </label>}
             </div>
-            {zoomLevel !== 'stage' && (
-              <label
-                className="lock-camera-toggle"
-                title="Holds the crop perfectly still at the average pastor position. Best when the pastor doesn't move much; he could walk out of frame if he does."
-              >
-                <input
-                  type="checkbox"
-                  checked={lockCamera}
-                  onChange={(e) => setLockCameraU(e.target.checked)}
-                />
-                <span className="switch" aria-hidden="true">
-                  <span className="switch-thumb" />
-                </span>
-                <span>Lock camera (no tracking)</span>
-              </label>
-            )}
-          </div>
-
-          {showFacePicker && (
-            <div className="face-picker">
-              <div className="muted small">Track which face?</div>
+            {showFacePicker && <div className="face-picker">
+              <div className="editor-field-label">Follow subject</div>
               <div className="face-picker-row">
-                <button
-                  className={`face-thumb auto ${identityId === null ? 'selected' : ''}`}
-                  onClick={() => setIdentityIdU(null)}
-                  title="Auto: follow the most prominent face per moment"
-                >
-                  Auto
+                <button type="button" className={`face-thumb auto ${identityId === null ? 'selected' : ''}`}
+                  aria-pressed={identityId === null} onClick={() => setIdentityIdU(null)}
+                  title="Auto: follow the most prominent face per moment">Auto</button>
+                {significantIdentities.map(id => <button key={id.id} type="button"
+                  className={`face-thumb ${identityId === id.id ? 'selected' : ''}`}
+                  aria-pressed={identityId === id.id} onClick={() => setIdentityIdU(id.id)}
+                  title={`Identity ${id.id} · ${id.n_samples} samples`}>
+                  <img src={fileUrl.identityThumb(sermon.name, id.id)} alt={`Face ${id.id}`} />
+                </button>)}
+              </div>
+            </div>}
+            {!showFacePicker && <p className="muted small">Subject tracking uses the most prominent face automatically.</p>}
+          </section>}
+
+          {inspectorSection === 'captions' && <section className="editor-panel editor-captions-panel" aria-label="Caption controls">
+            <div className="eyebrow">03 / Typography</div><h3>Caption style</h3>
+            <p className="muted small">Choose a preset, then customize it for this clip. Built-in styles remain read-only.</p>
+            {styles.length > 0 && <CaptionStylePicker styles={styles} value={styleKey} onChange={setStyleKeyU} />}
+            {styleKey && styles.length > 0 && !selectedStyle &&
+              <div className="error">Selected caption style is missing. Choose an available style before export.</div>}
+            {admin && styles.length > 0 && <div className="editor-style-actions">
+              <button type="button" className="secondary" onClick={e => {
+                styleEditorTrigger.current = e.currentTarget
+                setEditorInitial(editableStyleDraft(styles[0]))
+              }}>+ New style</button>
+              {selectedStyle && <>
+                <button type="button" className="secondary" onClick={e => {
+                  styleEditorTrigger.current = e.currentTarget
+                  setEditorInitial(canEditStyle(selectedStyle) ? selectedStyle : editableStyleDraft(selectedStyle))
+                }}>
+                  {canEditStyle(selectedStyle) ? 'Edit style' : 'Customize'}
                 </button>
-                {significantIdentities.map((id) => (
-                  <button
-                    key={id.id}
-                    className={`face-thumb ${identityId === id.id ? 'selected' : ''}`}
-                    onClick={() => setIdentityIdU(id.id)}
-                    title={`Identity ${id.id} · ${id.n_samples} samples`}
-                  >
-                    <img
-                      src={fileUrl.identityThumb(sermon.name, id.id)}
-                      alt={`Face ${id.id}`}
-                    />
-                  </button>
-                ))}
+                <button type="button" className="secondary" onClick={e => {
+                  styleEditorTrigger.current = e.currentTarget
+                  void duplicateStyle()
+                }}>Duplicate</button>
+                {canDeleteStyle(selectedStyle) && <button type="button" className="secondary"
+                  disabled={deletingStyleKey !== null}
+                  onClick={() => deleteStyle(selectedStyle)}>Delete</button>}
+              </>}
+              {managedStyle && <div className="editor-manage-style">
+                <label htmlFor="manage-caption-style">Manage saved style</label>
+                <select id="manage-caption-style" value={managedStyle.key}
+                  onChange={e => setManagedStyleKey(e.target.value)}>
+                  {styles.filter(style => !style.built_in).map(style =>
+                    <option key={style.key} value={style.key}>{style.label}</option>)}
+                </select>
+                <button type="button" className="secondary" disabled={deletingStyleKey !== null}
+                  onClick={() => deleteStyle(managedStyle)}>Delete saved style</button>
+              </div>}
+            </div>}
+            <div className="editor-caption-options">
+              <label className="hook-toggle" title="Burn the clip's hook title on screen for the first 2 seconds">
+                <input type="checkbox" checked={includeHookTitle}
+                  onChange={e => setIncludeHookTitleU(e.target.checked)} /> Hook title overlay
+              </label>
+              <p className="muted small">The opening title is separate from the caption style.</p>
+              <div className="editor-position-row">
+                <span className="editor-field-label">Position</span>
+                <span className="muted small">{captionMarginV === null ? 'Preset default' : 'Custom placement'}</span>
+                {captionMarginV !== null && <button type="button" className="secondary"
+                  onClick={() => setCaptionMarginVU(null)}>Reset position</button>}
               </div>
             </div>
-          )}
+          </section>}
 
-          <div className="export-status">
-            {exporting && (
-              <div className="export-progress">
+          {inspectorSection === 'export' && <section className="editor-panel" aria-label="Export controls">
+            <div className="eyebrow">04 / Deliver</div><h3>Export vertical clip</h3>
+            <div className="editor-export-summary">
+              <div><span>Length</span><strong>{formatTime(end - start)}</strong></div>
+              <div><span>Caption style</span><strong>{selectedStyle?.label ?? 'Unavailable'}</strong></div>
+              <div><span>Frame</span><strong>{zoomLevel[0].toUpperCase() + zoomLevel.slice(1)}</strong></div>
+            </div>
+            <button type="button" className="primary editor-export-button" onClick={onExport}
+              disabled={!!exporting || !selectedStyle}>{exporting ? 'Exporting…' : 'Export vertical clip'}</button>
+            {exportJob?.status === 'failed' && <div className="error" role="alert">
+              Export failed: {(exportJob.error ?? '').split('\n')[0]}</div>}
+            <div className="export-status">
+              {exporting && <div className="export-progress" role="status">
                 <div>{exportJob?.progress_message ?? 'Exporting…'}</div>
-                <progress
-                  value={exportJob?.progress_percent ?? 0}
-                  max={1}
-                />
-                <div className="progress-pct">
-                  {Math.round((exportJob?.progress_percent ?? 0) * 100)}%
-                </div>
-              </div>
-            )}
-            {currentExportedFilename && (
-              <div className="muted">
-                Exported · <a href={fileUrl.clip(currentExportedFilename)} download>Download</a>
-              </div>
-            )}
-            {showStale && previous && (
-              <div className="stale-export-warning">
-                Previous export from a different clip range
-                ({previous.start.toFixed(1)} – {previous.end.toFixed(1)}s,
+                <progress value={exportJob?.progress_percent ?? 0} max={1} />
+                <div className="progress-pct">{Math.round((exportJob?.progress_percent ?? 0) * 100)}%</div>
+              </div>}
+              {currentExportedFilename && <div className="editor-export-complete">
+                <strong>Export ready</strong><a href={fileUrl.clip(currentExportedFilename)} download>Download MP4</a>
+              </div>}
+              {showStale && previous && <div className="stale-export-warning">
+                Previous export from a different clip range ({previous.start.toFixed(1)} – {previous.end.toFixed(1)}s,
                 {' '}{(previous.end - previous.start).toFixed(1)}s long) ·{' '}
                 <a href={fileUrl.clip(previous.filename)} download>Download</a>
-                <div className="muted small">
-                  Re-export to apply your current trim and settings.
-                </div>
-              </div>
-            )}
-            {!exporting && !currentExportedFilename && !showStale && (
-              <div className="muted small">No export yet.</div>
-            )}
-          </div>
-
-          {currentExportedFilename && (
-            <Publish
-              sermon={sermon}
-              clip={clip}
-              exportedFilename={currentExportedFilename}
-            />
-          )}
-        </div>
+                <div className="muted small">Re-export to apply your current trim and settings.</div>
+              </div>}
+              {!exporting && !currentExportedFilename && !showStale && <p className="muted small">No export yet.</p>}
+            </div>
+            {currentExportedFilename && <Publish sermon={sermon} clip={clip} exportedFilename={currentExportedFilename} />}
+          </section>}
+        </aside>
       </div>
-      <button type="button" className="secondary transcript-toggle"
-        onClick={() => setShowTranscript(value => !value)}>
-        {showTranscript ? 'Hide transcript corrections' : 'Correct transcript text'}
-      </button>
-      {showTranscript && <TranscriptEditor
-        source={sermon.name} start={start} end={end}
-        onChanged={() => setTranscriptRevision(value => value + 1)}
-      />}
+      {showTranscript && <TranscriptEditor source={sermon.name} start={start} end={end}
+        onChanged={() => setTranscriptRevision(value => value + 1)} />}
+      {editorInitial && <div className="editor-style-backdrop">
+        <CaptionStyleEditor key={`${editorInitial.key}:${editorInitial.revision ?? 'new'}`}
+          initial={editorInitial} fonts={fonts} onSave={saveStyle}
+          onCancel={closeStyleEditor} />
+      </div>}
     </div>
   )
 }

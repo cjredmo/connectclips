@@ -21,7 +21,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const body = await r.json()
       if (body?.detail) detail = body.detail
-    } catch {}
+    } catch { /* Keep the status text if the error body is not JSON. */ }
     throw new Error(detail)
   }
   // Some DELETE/POST endpoints return JSON; some return empty bodies.
@@ -113,6 +113,11 @@ export const api = {
       `/sermons/${encodeURIComponent(source)}/clips/${clip_index}/overrides`,
       { method: 'DELETE' },
     ),
+  updateClipScriptureReference: (source: string, clip_index: number, clip_id: string, scripture_reference: string | null) =>
+    jsonFetch<{ scripture_reference: string | null }>(
+      `/sermons/${encodeURIComponent(source)}/clips/${clip_index}/scripture-reference`,
+      { method: 'PATCH', body: JSON.stringify({ clip_id, scripture_reference }) },
+    ),
 
   // Preview-pane support — see backend/app/services/reframe.track_for_clip.
   // After the source-level prescan lands during ingest, this is a near-instant
@@ -185,6 +190,10 @@ export const api = {
     jsonFetch<CaptionStyle>(`/caption-styles/${encodeURIComponent(key)}/duplicate`, {
       method: 'POST', body: JSON.stringify({ name }),
     }),
+  captionStyleReferences: (key: string, source: string, clip_index: number) =>
+    jsonFetch<{ current_clip: boolean; other_clips: number }>(
+      `/caption-styles/${encodeURIComponent(key)}/references?source=${encodeURIComponent(source)}&clip_index=${clip_index}`,
+    ),
   deleteCaptionStyle: (key: string) =>
     jsonFetch<{ deleted: boolean }>(`/caption-styles/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
@@ -230,7 +239,7 @@ export const api = {
       try {
         const body = await r.json()
         if (body?.detail) detail = body.detail
-      } catch {}
+      } catch { /* Keep the status text if the error body is not JSON. */ }
       throw new Error(detail)
     }
     return r.json()

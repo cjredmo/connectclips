@@ -83,6 +83,35 @@ class ManualClipTests(unittest.TestCase):
             self.assertIn(invalid.status_code, (400, 422))
         self.assertEqual(len(json.loads(clip_selection.clips_path_for("sample.mp4").read_text())["clips"]), 1)
 
+    def test_scripture_reference_edit_and_clear_preserve_clip_identity_and_transcript(self):
+        app.dependency_overrides[require_admin] = lambda: None
+        self.addCleanup(app.dependency_overrides.pop, require_admin, None)
+        client = TestClient(app)
+        created = client.post("/api/sermons/sample.mp4/clips/manual", json={
+            "title": "Synthetic clip", "start": 3, "end": 8}).json()["clip"]
+        path = clip_selection.clips_path_for("sample.mp4")
+        before = json.loads(path.read_text(encoding="utf-8"))
+        route = "/api/sermons/sample.mp4/clips/0/scripture-reference"
+        updated = client.patch(route, json={"clip_id": created["id"],
+                                           "scripture_reference": "  Example 2:3  "})
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json(), {"scripture_reference": "Example 2:3"})
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["clips_version"], before["clips_version"])
+        self.assertEqual({k: v for k, v in saved["clips"][0].items() if k != "scripture_reference"},
+                         before["clips"][0])
+        self.assertEqual(client.get("/api/sermons/sample.mp4/clips").json()["clips"][0]["scripture_reference"],
+                         "Example 2:3")
+        for payload in ({"clip_id": "stale", "scripture_reference": "Other 1"},
+                        {"clip_id": created["id"], "scripture_reference": "X" * 121}):
+            self.assertIn(client.patch(route, json=payload).status_code, (400, 409))
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["clips"][0]["scripture_reference"],
+                         "Example 2:3")
+        cleared = client.patch(route, json={"clip_id": created["id"], "scripture_reference": "  "})
+        self.assertEqual(cleared.json(), {"scripture_reference": None})
+        self.assertNotIn("scripture_reference", json.loads(path.read_text(encoding="utf-8"))["clips"][0])
+        self.assertEqual(self.transcript.read_bytes(), self.original_transcript)
+
     def test_rerun_preserves_manual_clip_and_reindexes_its_overrides(self):
         source = "sample.mp4"
         path = clip_selection.clips_path_for(source)

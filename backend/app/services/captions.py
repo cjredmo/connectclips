@@ -61,6 +61,8 @@ class CaptionStyle:
     preview_background_opacity: float | None = None
     presentation_mode: str = "progressive_chunk"
     schema_version: int = 2
+    background_persistence: str = "speech"
+    background_linger_seconds: float = 1.0
 
     def __post_init__(self) -> None:
         if (self.schema_version != 2 or not isinstance(self.key, str) or
@@ -68,6 +70,9 @@ class CaptionStyle:
             raise ValueError("invalid caption style identity or version")
         if self.presentation_mode not in {"single_word", "progressive_chunk", "full_chunk_highlight"}:
             raise ValueError("invalid caption presentation mode")
+        if (not isinstance(self.background_persistence, str) or
+                self.background_persistence not in {"speech", "linger", "clip"}):
+            raise ValueError("invalid background persistence")
         if self.presentation_mode == "single_word":
             object.__setattr__(self, "max_words_per_chunk", 1)
         if not isinstance(self.font_name, str) or not self.font_name or any(
@@ -80,6 +85,8 @@ class CaptionStyle:
                 type(self.background_box) is not bool or
                 type(self.background_opacity) not in (float, int) or
                 not math.isfinite(self.background_opacity) or
+                type(self.background_linger_seconds) not in (float, int) or
+                not math.isfinite(self.background_linger_seconds) or
                 (self.preview_background_opacity is not None and
                  (type(self.preview_background_opacity) not in (float, int) or
                   not math.isfinite(self.preview_background_opacity)))):
@@ -97,6 +104,7 @@ class CaptionStyle:
                 1 <= self.max_words_per_chunk <= 20 and
                 1 <= self.max_chars_per_chunk <= 200 and
                 0 <= self.background_opacity <= 1 and
+                0 <= self.background_linger_seconds <= 10 and
                 (self.preview_background_opacity is None or
                  0 <= self.preview_background_opacity <= 1)):
             raise ValueError("caption style value is out of range")
@@ -119,52 +127,51 @@ def _ass_alpha(opacity: float) -> str:
 STYLES: dict[str, CaptionStyle] = {
     "classic": CaptionStyle(
         key="classic",
-        label="Classic — yellow highlight",
+        label="Classic",
         font_name="DejaVu Sans",
-        font_size=90,
+        font_size=92,
         primary_color="#FFFFFF",
-        highlight_color="#FFFF00",
+        highlight_color="#F8DA70",
         outline_color="#000000",
-        outline_width=5,
-        shadow_depth=2,
-        highlight_scale=110,
+        outline_width=4,
+        shadow_depth=1,
+        highlight_scale=108,
         vertical_anchor="bottom",
         margin_v=500,
         font_weight=800,
         max_words_per_chunk=3,
-        max_chars_per_chunk=22,
+        max_chars_per_chunk=20,
         background_box=False,
-        preview_highlight_color="#FFD700",
     ),
     "neon_pop": CaptionStyle(
         key="neon_pop",
-        label="Neon Pop — pink highlight, larger pop",
+        label="Neon Pop",
         font_name="DejaVu Sans",
-        font_size=96,
+        font_size=98,
         primary_color="#FFFFFF",
-        highlight_color="#FF69B4",
+        highlight_color="#FF5BA7",
         outline_color="#000000",
-        outline_width=6,
-        shadow_depth=3,
-        highlight_scale=130,
+        outline_width=4,
+        shadow_depth=2,
+        highlight_scale=124,
         vertical_anchor="bottom",
-        margin_v=600,
+        margin_v=550,
         font_weight=800,
         max_words_per_chunk=3,
-        max_chars_per_chunk=22,
+        max_chars_per_chunk=20,
         background_box=False,
     ),
     "block": CaptionStyle(
         key="block",
-        label="Block — text on dark bar",
+        label="Block",
         font_name="DejaVu Sans",
-        font_size=80,
+        font_size=82,
         primary_color="#FFFFFF",
-        highlight_color="#FFFF00",
+        highlight_color="#FFD86B",
         outline_color="#000000",
-        outline_width=2,
+        outline_width=1,
         shadow_depth=0,
-        highlight_scale=110,
+        highlight_scale=106,
         vertical_anchor="bottom",
         margin_v=480,
         font_weight=800,
@@ -175,42 +182,39 @@ STYLES: dict[str, CaptionStyle] = {
         max_words_per_chunk=3,
         max_chars_per_chunk=20,
         background_box=True,
-        background_color="#000000",
-        background_opacity=191 / 255,
-        preview_highlight_color="#FFD700",
-        preview_background_opacity=0.75,
+        background_color="#13202E",
+        background_opacity=0.82,
     ),
     "white_block": CaptionStyle(
         key="white_block",
-        label="White Block — black text on white bar, red highlight",
+        label="White Block",
         font_name="DejaVu Sans",
-        font_size=80,
-        primary_color="#000000",
-        highlight_color="#FF0000",
+        font_size=82,
+        primary_color="#18293B",
+        highlight_color="#A53A38",
         outline_color="#000000",
         outline_width=0,                # no outline; black text on white bar is legible enough
         shadow_depth=0,
-        highlight_scale=110,
+        highlight_scale=106,
         vertical_anchor="bottom",
         margin_v=480,
         font_weight=800,
         max_words_per_chunk=3,
         max_chars_per_chunk=20,
         background_box=True,
-        background_color="#FFFFFF",
-        background_opacity=239 / 255,
-        preview_background_opacity=0.95,
+        background_color="#F7F3EA",
+        background_opacity=0.94,
     ),
     "word_pop": CaptionStyle(
         key="word_pop",
-        label="Word Pop — one big word at a time",
+        label="Word Pop",
         font_name="DejaVu Sans",
-        font_size=140,
+        font_size=132,
         primary_color="#FFFFFF",
-        highlight_color="#FFFF00",
+        highlight_color="#FDE68A",
         outline_color="#000000",
-        outline_width=8,
-        shadow_depth=4,
+        outline_width=5,
+        shadow_depth=2,
         highlight_scale=100,           # only one word in chunk; no scale-up
         vertical_anchor="middle",
         margin_v=0,
@@ -218,7 +222,6 @@ STYLES: dict[str, CaptionStyle] = {
         max_words_per_chunk=1,
         max_chars_per_chunk=20,
         background_box=False,
-        preview_highlight_color="#FFFFFF",
         presentation_mode="single_word",
     ),
 }
@@ -486,6 +489,7 @@ def generate_ass(
     chunk_starts = [c[0].start for c in chunks]
 
     events = []
+    box_intervals: list[tuple[float, float, int]] = []
     for ci, chunk in enumerate(chunks):
         chunk_start = chunk[0].start
         # End the chunk at its last word's end, OR at the next chunk's start
@@ -499,17 +503,28 @@ def generate_ass(
         if chunk_end <= chunk_start:
             chunk_end = chunk_start + 0.05  # defensive
 
-        if s.background_box:
+        # Keep only the box through a short inter-chunk gap. Text events still
+        # end at chunk_end, so word visibility and highlighting do not change.
+        box_end = chunk_end
+        if (s.background_box and s.presentation_mode != "full_chunk_highlight" and
+                ci + 1 < len(chunks) and
+                chunk_starts[ci + 1] - chunk[-1].end <= MIN_GAP_FOR_BREAK):
+            box_end = chunk_starts[ci + 1]
+
+        if s.background_box and s.background_persistence != "clip":
             chunk_chars = sum(len(w.text) for w in chunk) + max(0, len(chunk) - 1)
             n_lines = _estimate_lines(chunk_chars, s.font_size, video_w)
-            bar_h = n_lines * line_h + BAR_PAD_TOP + BAR_PAD_BOTTOM
-            bar_bottom = video_h - s.margin_v + BAR_PAD_BOTTOM
-            bar_top = max(0, bar_bottom - bar_h)
-            path = f"m 0 0 l {video_w} 0 l {video_w} {bar_h} l 0 {bar_h}"
-            events.append(
-                f"Dialogue: 0,{_fmt_time(chunk_start)},{_fmt_time(chunk_end)},Default,,0,0,0,,"
-                f"{{\\an7\\pos(0,{bar_top})\\bord0\\shad0\\1c{_ass_color(s.background_color, alpha=False)}\\1a{_ass_alpha(s.background_opacity)}\\p1}}{path}{{\\p0}}"
-            )
+            if s.background_persistence == "linger":
+                box_end = max(box_end, chunk_end + s.background_linger_seconds)
+                if clip_duration > 0:
+                    box_end = min(box_end, clip_duration)
+            if box_end > chunk_start:
+                if box_intervals and chunk_start <= box_intervals[-1][1]:
+                    prev_start, prev_end, prev_lines = box_intervals[-1]
+                    box_intervals[-1] = (prev_start, max(prev_end, box_end),
+                                         max(prev_lines, n_lines))
+                else:
+                    box_intervals.append((chunk_start, box_end, n_lines))
 
         for i, current in enumerate(chunk):
             parts = []
@@ -541,6 +556,21 @@ def generate_ass(
             events.append(
                 f"Dialogue: {text_layer},{_fmt_time(start_t)},{_fmt_time(end_t)},Default,,0,0,0,,{text}"
             )
+
+    if s.background_box and s.background_persistence == "clip" and clip_duration > 0:
+        n_lines = max((_estimate_lines(sum(len(w.text) for w in chunk) + len(chunk) - 1,
+                                       s.font_size, video_w) for chunk in chunks), default=1)
+        box_intervals = [(0.0, clip_duration, n_lines)]
+
+    for box_start, box_end, n_lines in box_intervals:
+        bar_h = n_lines * line_h + BAR_PAD_TOP + BAR_PAD_BOTTOM
+        bar_bottom = video_h - s.margin_v + BAR_PAD_BOTTOM
+        bar_top = max(0, bar_bottom - bar_h)
+        path = f"m 0 0 l {video_w} 0 l {video_w} {bar_h} l 0 {bar_h}"
+        events.append(
+            f"Dialogue: 0,{_fmt_time(box_start)},{_fmt_time(box_end)},Default,,0,0,0,,"
+            f"{{\\an7\\pos(0,{bar_top})\\bord0\\shad0\\1c{_ass_color(s.background_color, alpha=False)}\\1a{_ass_alpha(s.background_opacity)}\\p1}}{path}{{\\p0}}"
+        )
 
     if hook_title and hook_title.strip() and clip_duration > 0:
         events.append(_hook_dialogue(hook_title, clip_duration))

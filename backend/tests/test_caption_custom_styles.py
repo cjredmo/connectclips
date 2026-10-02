@@ -61,13 +61,29 @@ class CustomStyleTests(unittest.TestCase):
 
     def test_safe_delete_reference_and_unknown_override(self):
         made = caption_styles.create("Sample", self.base)
+        untouched = caption_styles.create("Untouched", self.base)
+        self.assertEqual(caption_styles.reference_counts(made["key"], "sample.mp4", 0),
+                         {"current_clip": False, "other_clips": 0})
         clip_overrides.save_override("sample.mp4", 0, {"caption_style": made["key"]})
+        self.assertEqual(caption_styles.reference_counts(made["key"], "sample.mp4", 0),
+                         {"current_clip": True, "other_clips": 0})
         with self.assertRaisesRegex(caption_styles.StyleConflict, "still selected"):
             caption_styles.delete(made["key"])
+        clip_overrides.save_override("other.mp4", 1, {"caption_style": made["key"]})
+        self.assertEqual(caption_styles.reference_counts(made["key"], "sample.mp4", 0),
+                         {"current_clip": True, "other_clips": 1})
         with self.assertRaisesRegex(ValueError, "unknown caption style"):
             clip_overrides.save_override("sample.mp4", 0, {"caption_style": "custom:missing"})
         clip_overrides.save_override("sample.mp4", 0, {"caption_style": "classic"})
+        self.assertEqual(caption_styles.reference_counts(made["key"], "sample.mp4", 0),
+                         {"current_clip": False, "other_clips": 1})
+        with self.assertRaises(caption_styles.StyleConflict):
+            caption_styles.delete(made["key"])
+        clip_overrides.save_override("other.mp4", 1, {"caption_style": "classic"})
         caption_styles.delete(made["key"])
+        self.assertEqual(caption_styles.resolve(untouched["key"])[0].key, untouched["key"])
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            caption_styles.reference_counts("classic", "sample.mp4", 0)
 
     def test_validation_malformed_store_and_atomic_write(self):
         for key, bad in (("primary_color", "red"), ("background_opacity", 1.5),
@@ -83,6 +99,42 @@ class CustomStyleTests(unittest.TestCase):
         stored.write_text("{bad", encoding="utf-8")
         with self.assertRaises(caption_styles.StyleStoreError):
             caption_styles.list_styles()
+
+    def test_background_persistence_validation_and_legacy_storage(self):
+        for mode in ("speech", "linger", "clip"):
+            with self.subTest(mode=mode):
+                made = caption_styles.create("Sample", {**self.base,
+                    "background_persistence": mode, "background_linger_seconds": 1.4})
+                self.assertEqual(caption_styles.resolve(made["key"])[0].background_persistence,
+                                 mode)
+                duplicate = caption_styles.duplicate(made["key"], "Copy")
+                self.assertEqual(duplicate["background_persistence"], mode)
+                self.assertEqual(duplicate["background_linger_seconds"], 1.4)
+                updated = caption_styles.update(made["key"], "Edited", made, 1)
+                self.assertEqual(updated["background_persistence"], mode)
+        for value in ("invalid", None, [], 3):
+            with self.subTest(invalid_mode=value), self.assertRaises(ValueError):
+                caption_styles.create("Bad", {**self.base,
+                    "background_persistence": value})
+        for value in (-.1, 10.1, float("nan"), float("inf"), "1", True):
+            with self.subTest(invalid_linger=value), self.assertRaises(ValueError):
+                caption_styles.create("Bad", {**self.base,
+                    "background_linger_seconds": value})
+        made = caption_styles.create("Old", self.base)
+        store = caption_styles.path()
+        data = json.loads(store.read_text(encoding="utf-8"))
+        old = next(record for record in data["styles"] if record["id"] == made["key"])
+        old["descriptor"].pop("background_persistence")
+        old["descriptor"].pop("background_linger_seconds")
+        store.write_text(json.dumps(data), encoding="utf-8")
+        before = store.read_bytes()
+        listed = next(style for style in caption_styles.list_styles()
+                      if style["key"] == made["key"])
+        self.assertEqual(listed["background_persistence"], "speech")
+        self.assertEqual(listed["background_linger_seconds"], 1.0)
+        self.assertEqual(caption_styles.resolve(made["key"])[0].background_persistence,
+                         "speech")
+        self.assertEqual(store.read_bytes(), before)
 
     def test_modes_ass_and_snapshot_provenance(self):
         words = [captions.Word("This", 0, .25), captions.Word("is", .3, .5),
@@ -155,6 +207,10 @@ class CustomStyleTests(unittest.TestCase):
             "descriptor": self.base, "expected_revision": 1}).status_code, 403)
         self.assertEqual(client.delete("/api/caption-styles/custom:missing").status_code, 404)
         clip_overrides.save_override("sample.mp4", 0, {"caption_style": style_id})
+        references = client.get(f"/api/caption-styles/{style_id}/references",
+                                params={"source": "sample.mp4", "clip_index": 0})
+        self.assertEqual(references.status_code, 200)
+        self.assertEqual(references.json(), {"current_clip": True, "other_clips": 0})
         self.assertEqual(client.delete(f"/api/caption-styles/{style_id}").status_code, 409)
 
 

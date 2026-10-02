@@ -21,6 +21,7 @@ FONT_CHOICES = ("DejaVu Sans", "Arial", "Helvetica")
 _lock = threading.RLock()
 reference_lock = _lock  # serialize clip reference updates with preset deletion
 _style_fields = {field.name for field in fields(captions.CaptionStyle)}
+_optional_style_fields = {"background_persistence", "background_linger_seconds"}
 _custom_id = re.compile(r"custom:[0-9a-f]{32}\Z")
 
 
@@ -52,7 +53,7 @@ def _validate_record(record: object) -> dict:
             not isinstance(record.get("updated_at"), str) or
             not isinstance(descriptor, dict)):
         raise StyleStoreError("custom caption style storage is invalid")
-    if set(descriptor) != _style_fields:
+    if not (_style_fields - _optional_style_fields <= set(descriptor) <= _style_fields):
         raise StyleStoreError("custom caption style descriptor is incomplete")
     try:
         style = captions.CaptionStyle(**descriptor)
@@ -124,7 +125,8 @@ def _custom_style(style_id: str, name: str, descriptor: dict) -> captions.Captio
 
 
 def _public(record: dict) -> dict:
-    return {**record["descriptor"], "built_in": False, "editable": True,
+    return {**captions.CaptionStyle(**record["descriptor"]).descriptor(),
+            "built_in": False, "editable": True,
             "revision": record["revision"], "created_at": record["created_at"],
             "updated_at": record["updated_at"]}
 
@@ -199,11 +201,11 @@ def duplicate(style_id: str, name: str) -> dict:
                                 preview_background_opacity=None).descriptor())
 
 
-def _references(style_id: str) -> int:
-    count = 0
+def _reference_locations(style_id: str) -> list[tuple[Path, str]]:
+    locations = []
     root = settings.data_work_dir
     if not root.exists():
-        return 0
+        return locations
     for store in root.glob("*/clip_overrides.json"):
         try:
             overrides = json.loads(store.read_text(encoding="utf-8"))
@@ -211,16 +213,26 @@ def _references(style_id: str) -> int:
             raise StyleConflict("cannot verify clip references; repair local overrides first") from exc
         if not isinstance(overrides, dict):
             raise StyleConflict("cannot verify clip references; repair local overrides first")
-        count += sum(isinstance(value, dict) and value.get("caption_style") == style_id
-                     for value in overrides.values())
-    return count
+        locations.extend((store, key) for key, value in overrides.items()
+                         if isinstance(value, dict) and value.get("caption_style") == style_id)
+    return locations
+
+
+def reference_counts(style_id: str, source_name: str, clip_index: int) -> dict[str, int | bool]:
+    """Count references without exposing other sermons or clip identifiers."""
+    with _lock:
+        _find(_load(), style_id)
+        locations = _reference_locations(style_id)
+        current_store = settings.data_work_dir / Path(source_name).stem / "clip_overrides.json"
+        current = (current_store, str(clip_index)) in locations
+        return {"current_clip": current, "other_clips": len(locations) - int(current)}
 
 
 def delete(style_id: str) -> None:
     with _lock:
         records = _load()
         record = _find(records, style_id)
-        count = _references(style_id)
+        count = len(_reference_locations(style_id))
         if count:
             raise StyleConflict(
                 f"caption style is still selected by {count} clip(s); "

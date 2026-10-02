@@ -60,6 +60,14 @@ def duplicate_style(style_id: str, body: DuplicateInput) -> dict:
         raise _error(exc) from exc
 
 
+@router.get("/{style_id}/references", dependencies=[Depends(require_admin)])
+def style_references(style_id: str, source: str, clip_index: int) -> dict:
+    try:
+        return caption_styles.reference_counts(style_id, source, clip_index)
+    except ValueError as exc:
+        raise _error(exc) from exc
+
+
 @router.delete("/{style_id}", dependencies=[Depends(require_admin)])
 def delete_style(style_id: str) -> dict:
     try:

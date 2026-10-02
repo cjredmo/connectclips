@@ -1064,7 +1064,10 @@ def export_clip(
             transcript = load_display_transcript(transcript_path)
             words = captions.words_in_range(transcript, start, end)
             has_words = bool(words)
-        if has_words or hook_title:
+        full_clip_box = (isinstance(caption_style, captions.CaptionStyle) and
+                         caption_style.background_box and
+                         caption_style.background_persistence == "clip")
+        if has_words or hook_title or full_clip_box:
             ass_text = captions.generate_ass(
                 words, OUT_W, OUT_H, style=caption_style,
                 hook_title=hook_title, clip_duration=clip_duration,

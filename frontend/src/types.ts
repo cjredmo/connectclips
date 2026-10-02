@@ -57,6 +57,8 @@ export type CaptionStyle = {
   background_box: boolean
   background_color: string
   background_opacity: number
+  background_persistence: 'speech' | 'linger' | 'clip'
+  background_linger_seconds: number
   preview_highlight_color: string | null
   preview_background_opacity: number | null
   presentation_mode: CaptionPresentation

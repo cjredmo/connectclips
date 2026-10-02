@@ -12,14 +12,14 @@ class CaptionStyleTests(unittest.TestCase):
         response = caption_styles()
         self.assertEqual(json.loads(json.dumps(response)), response)
         self.assertEqual(response["default"], "classic")
-        styles = {item["key"]: item for item in response["styles"]}
+        styles = {item["key"]: item for item in response["styles"] if item["built_in"]}
         self.assertEqual(list(styles), ["classic", "neon_pop", "block", "white_block", "word_pop"])
         expected = {
-            "classic": (90, "#FFFFFF", "#FFFF00", 5, 2, 110, "bottom", 500, 3, 22, False),
-            "neon_pop": (96, "#FFFFFF", "#FF69B4", 6, 3, 130, "bottom", 600, 3, 22, False),
-            "block": (80, "#FFFFFF", "#FFFF00", 2, 0, 110, "bottom", 480, 3, 20, True),
-            "white_block": (80, "#000000", "#FF0000", 0, 0, 110, "bottom", 480, 3, 20, True),
-            "word_pop": (140, "#FFFFFF", "#FFFF00", 8, 4, 100, "middle", 0, 1, 20, False),
+            "classic": (92, "#FFFFFF", "#F8DA70", 4, 1, 108, "bottom", 500, 3, 20, False),
+            "neon_pop": (98, "#FFFFFF", "#FF5BA7", 4, 2, 124, "bottom", 550, 3, 20, False),
+            "block": (82, "#FFFFFF", "#FFD86B", 1, 0, 106, "bottom", 480, 3, 20, True),
+            "white_block": (82, "#18293B", "#A53A38", 0, 0, 106, "bottom", 480, 3, 20, True),
+            "word_pop": (132, "#FFFFFF", "#FDE68A", 5, 2, 100, "middle", 0, 1, 20, False),
         }
         fields = ("font_size", "primary_color", "highlight_color", "outline_width",
                   "shadow_depth", "highlight_scale", "vertical_anchor", "margin_v",
@@ -38,10 +38,13 @@ class CaptionStyleTests(unittest.TestCase):
                 self.assertEqual(descriptor["font_weight"], 900 if key == "word_pop" else 800)
                 self.assertIn("background_color", descriptor)
                 self.assertIn("background_opacity", descriptor)
-        self.assertEqual(styles["block"]["background_opacity"], 191 / 255)
-        self.assertEqual(styles["white_block"]["background_opacity"], 239 / 255)
-        self.assertEqual(styles["classic"]["preview_highlight_color"], "#FFD700")
-        self.assertEqual(styles["word_pop"]["preview_highlight_color"], "#FFFFFF")
+                self.assertEqual(descriptor["background_persistence"], "speech")
+                self.assertEqual(descriptor["background_linger_seconds"], 1.0)
+        self.assertEqual(styles["block"]["background_opacity"], .82)
+        self.assertEqual(styles["white_block"]["background_opacity"], .94)
+        self.assertTrue(all(style["preview_highlight_color"] is None and
+                            style["preview_background_opacity"] is None
+                            for style in styles.values()))
 
     def test_chunk_presentation_and_progressive_ass_are_unchanged(self):
         words = [Word("Hello", 0, 0.3), Word("there", 0.3, 0.6),
@@ -57,13 +60,13 @@ class CaptionStyleTests(unittest.TestCase):
     def test_ass_conversion_and_position_override(self):
         words = [Word("Sample", 0, 0.4)]
         neon = generate_ass(words, style="neon_pop")
-        self.assertIn("&H00B469FF", neon)  # RGB pink converted to ASS BGR
-        self.assertIn("Style: Default,DejaVu Sans,96,&H00FFFFFF", neon)
-        self.assertIn(",1,6,3,2,80,80,600,1", neon)
+        self.assertIn("&H00A75BFF", neon)  # RGB pink converted to ASS BGR
+        self.assertIn("Style: Default,DejaVu Sans,98,&H00FFFFFF", neon)
+        self.assertIn(",1,4,2,2,80,80,550,1", neon)
         block = generate_ass(words, style="block")
-        self.assertIn(r"\1c&H000000&\1a&H40&", block)
+        self.assertIn(r"\1c&H2E2013&\1a&H2E&", block)
         white = generate_ass(words, style="white_block")
-        self.assertIn(r"\1c&HFFFFFF&\1a&H10&", white)
+        self.assertIn(r"\1c&HEAF3F7&\1a&H0F&", white)
         self.assertIn(",2,80,80,777,1", generate_ass(words, style="classic", caption_margin_v=777))
         self.assertIn(",2,80,80,777,1", generate_ass(words, style="word_pop", caption_margin_v=777))
 

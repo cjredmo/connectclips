@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { currentWordIndex } from '../captionReveal'
-import { captionBottomMargin, chunkCaptionWords, liveCaptionStyle } from '../captionStyles'
+import { captionBackgroundAtTime, captionBackgroundIntervals, captionBottomMargin,
+  captionChunkEnd, chunkCaptionWords, liveCaptionStyle } from '../captionStyles'
 import type { CaptionStyle, Track, TranscriptWord } from '../types'
 import { CaptionLine } from './CaptionLine'
 
@@ -19,17 +20,16 @@ type Props = {
   identityId: number | null
   zoomLevel?: string | null
   lockCamera?: boolean
+  showPlacementGuide?: boolean
 }
 
-// Pane rendering size — keep it cheap to draw and easy to lay out next to the
-// trim controls. The source frame is decoded once per frame inside the <video>
-// element, then we crop+blit a 360×640 region onto canvas via drawImage.
+// The canvas draws at 360×640 and CSS scales the result with the editor frame.
+// The source frame is decoded once per frame inside the <video> element.
 const PANE_W = 360
 const PANE_H = 640
 // Reference frame height (matches reframe.OUT_H). caption_margin_v is in this
 // coordinate space; we scale it by PANE_H / FRAME_H to position the overlay.
 const FRAME_H = 1920
-const PANE_SCALE = PANE_H / FRAME_H
 
 const HOOK_DURATION = 2.0
 const HOOK_FADE = 0.3
@@ -71,8 +71,9 @@ function hookLines(title: string): { lines: string[]; fontSize: number } {
 export function LivePreview({
   sermon, clipStart, clipEnd, transcriptRevision, sourceVideoRef,
   captionStyle, captionMarginV, onCaptionMarginVChange,
-  includeHookTitle, hookTitle, identityId, zoomLevel, lockCamera,
+  includeHookTitle, hookTitle, identityId, zoomLevel, lockCamera, showPlacementGuide = false,
 }: Props) {
+  const previewRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const trackRef = useRef<Track | null>(null)
   const [track, setTrack] = useState<Track | null>(null)
@@ -91,6 +92,8 @@ export function LivePreview({
   // video element. No per-frame face crop is involved.
   useEffect(() => {
     let cancelled = false
+    // A changed framing request invalidates the previous crop track immediately.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTrack(null)
     trackRef.current = null
     setTrackError(null)
@@ -115,10 +118,9 @@ export function LivePreview({
     return () => { cancelled = true }
   }, [sermon, clipStart, clipEnd, transcriptRevision])
 
-  // Frame loop driven by the source video. requestVideoFrameCallback fires per
-  // decoded video frame (60Hz on this 60fps source) and also on seek, so the
-  // canvas crop stays glued to whatever the user is doing in the source player.
-  // Falls back to rAF for the rare browsers without rVFC.
+  // Draw on animation frames so the preview also updates while the secondary
+  // source player is collapsed. A hidden video need not receive video-frame
+  // callbacks, but it still decodes during playback and seek.
   const drawFrame = useCallback(() => {
     const v = sourceVideoRef.current
     const canvas = canvasRef.current
@@ -178,34 +180,32 @@ export function LivePreview({
   useEffect(() => {
     const v = sourceVideoRef.current
     if (!v) return
-    let id: number | null = null
     let rafId: number | null = null
+    let lastSourceTime = Number.NaN
+    let lastDrawMs = 0
 
     // Keep the captions / hook overlay in step with the source's currentTime.
     // Updating React state every frame is wasteful for caption rendering (changes
     // only every ~300-500ms typically), but keeping it simple here — re-renders
     // of a small element are cheap.
-    const tick = () => {
-      drawFrame()
-      const t = v.currentTime - clipStart
-      setClipTime(t)
-      if ('requestVideoFrameCallback' in v) {
-        id = (v as any).requestVideoFrameCallback(tick)
-      } else {
-        rafId = requestAnimationFrame(tick)
+    const tick = (now: number) => {
+      // 30 fps is enough for a 360×640 draft and avoids rerendering React
+      // continuously while the source is paused or its details are closed.
+      if (v.readyState >= 2 && v.currentTime !== lastSourceTime &&
+          (v.paused || now - lastDrawMs >= 33)) {
+        drawFrame()
+        lastSourceTime = v.currentTime
+        lastDrawMs = now
+        setClipTime(v.currentTime - clipStart)
       }
-    }
-    if ('requestVideoFrameCallback' in v) {
-      id = (v as any).requestVideoFrameCallback(tick)
-    } else {
       rafId = requestAnimationFrame(tick)
     }
+    rafId = requestAnimationFrame(tick)
     // Initial paint in case the video is paused — without this the canvas
     // stays blank until first play.
     drawFrame()
 
     return () => {
-      if (id != null && 'cancelVideoFrameCallback' in v) (v as any).cancelVideoFrameCallback(id)
       if (rafId != null) cancelAnimationFrame(rafId)
     }
   }, [drawFrame, clipStart, sourceVideoRef, track])
@@ -215,17 +215,16 @@ export function LivePreview({
     return captionStyle ? chunkCaptionWords(words, captionStyle) : []
   }, [words, captionStyle])
 
-  const currentChunk = (() => {
+  const backgroundIntervals = useMemo(() => captionStyle
+    ? captionBackgroundIntervals(chunks, captionStyle, clipEnd - clipStart) : [],
+  [chunks, captionStyle, clipEnd, clipStart])
+
+  const chunkAtTime = () => {
+    if (!captionStyle) return null
     for (let i = 0; i < chunks.length; i++) {
       const c = chunks[i]
       const start = c[0].start
-      const end = i + 1 < chunks.length
-        ? (captionStyle?.presentation_mode === 'full_chunk_highlight'
-          ? chunks[i + 1][0].start
-          : Math.min(c[c.length - 1].end, chunks[i + 1][0].start))
-        : (captionStyle?.presentation_mode === 'full_chunk_highlight'
-          ? Math.max(c[c.length - 1].end, clipEnd - clipStart)
-          : c[c.length - 1].end)
+      const end = captionChunkEnd(chunks, i, captionStyle, clipEnd - clipStart)
       if (clipTime >= start && clipTime < end) {
         // Find the current word within the chunk
         const wordIdx = currentWordIndex(c, clipTime)
@@ -233,7 +232,9 @@ export function LivePreview({
       }
     }
     return null
-  })()
+  }
+  const currentChunk = chunkAtTime()
+  const backgroundInterval = captionBackgroundAtTime(backgroundIntervals, clipTime)
 
   // Hook overlay visibility + opacity (fade in 0-0.3s, hold, fade out 1.7-2.0s).
   const hook = useMemo(() => {
@@ -243,13 +244,12 @@ export function LivePreview({
     if (clipTime < HOOK_FADE) opacity = clipTime / HOOK_FADE
     else if (clipTime > HOOK_DURATION - HOOK_FADE) opacity = (HOOK_DURATION - clipTime) / HOOK_FADE
     const { lines, fontSize } = hookLines(hookTitle)
-    return { lines, fontSize: fontSize * PANE_SCALE, opacity }
+    return { lines, fontSize: fontSize / 19.2, opacity }
   }, [clipTime, includeHookTitle, hookTitle])
 
   // Effective caption_margin_v — the volunteer's drag value if set, otherwise
   // the style's default. Translated to a CSS bottom offset within the pane.
   const effectiveMarginV = captionStyle ? captionBottomMargin(captionStyle, captionMarginV) : 0
-  const captionBottomPx = effectiveMarginV * PANE_SCALE
 
   // Drag handle: vertical-only. We drag the caption box's center, then derive
   // margin_v from where it ended up. Clamped so the box can't go off-frame.
@@ -263,7 +263,8 @@ export function LivePreview({
     const dy = e.clientY - dragRef.current.startY
     // Pane Y increases downward; margin_v measures FROM bottom, so dragging
     // down should DECREASE margin_v (caption moves toward bottom).
-    const newMarginV = dragRef.current.startMarginV - dy / PANE_SCALE
+    const scale = (previewRef.current?.getBoundingClientRect().height ?? PANE_H) / FRAME_H
+    const newMarginV = dragRef.current.startMarginV - dy / scale
     const clamped = Math.max(80, Math.min(FRAME_H - 80, Math.round(newMarginV)))
     onCaptionMarginVChange(clamped)
   }
@@ -273,13 +274,17 @@ export function LivePreview({
   }
 
   return (
-    <div className="live-preview" style={{ width: PANE_W, height: PANE_H }}>
+    <div className="live-preview" ref={previewRef}>
       <canvas
         ref={canvasRef}
         width={PANE_W}
         height={PANE_H}
         className="live-preview-canvas"
       />
+      {showPlacementGuide && <div className="editor-placement-guide" aria-hidden="true">
+        <div className="editor-guide-top" />
+        <div className="editor-guide-bottom" />
+      </div>}
       {trackLoading && (
         <div className="live-preview-status">Scanning faces…</div>
       )}
@@ -291,17 +296,25 @@ export function LivePreview({
           className="hook-live"
           style={{
             opacity: hook.opacity,
-            fontSize: `${hook.fontSize}px`,
+            fontSize: `${hook.fontSize}cqh`,
             lineHeight: 1.1,
           }}
         >
           {hook.lines.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       )}
+      {backgroundInterval && captionStyle && (
+        <div className="cap-live cap-live-box"
+          style={liveCaptionStyle(captionStyle, captionMarginV)} aria-hidden="true">
+          {backgroundInterval.chunk
+            ? <CaptionLine words={backgroundInterval.chunk} currentIndex={-1} style={captionStyle} />
+            : <div className="cp-line" style={{ minHeight: '1em' }} />}
+        </div>
+      )}
       {currentChunk && captionStyle && (
         <div
-          className="cap-live"
-          style={liveCaptionStyle(captionStyle, captionMarginV)}
+          className="cap-live cap-live-text"
+          style={{ ...liveCaptionStyle(captionStyle, captionMarginV), background: 'transparent' }}
         >
           <CaptionLine words={currentChunk.chunk} currentIndex={currentChunk.wordIdx}
             style={captionStyle} />
@@ -313,7 +326,7 @@ export function LivePreview({
       {chunks.length > 0 && (
         <div
           className="caption-drag-handle"
-          style={{ bottom: `${captionBottomPx - 12}px`, height: '24px' }}
+          style={{ bottom: `calc(${effectiveMarginV / FRAME_H * 100}% - 12px)`, height: '24px' }}
           onPointerDown={onDragStart}
           onPointerMove={onDragMove}
           onPointerUp={onDragEnd}

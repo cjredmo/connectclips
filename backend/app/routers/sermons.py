@@ -347,6 +347,46 @@ class ClipOverridesIn(BaseModel):
     lock_camera: bool | None = None
 
 
+class ClipScriptureReferenceIn(BaseModel):
+    clip_id: str
+    scripture_reference: str | None = None
+
+
+@router.patch("/{name}/clips/{clip_index}/scripture-reference", dependencies=[Depends(require_admin)])
+def update_clip_scripture_reference(name: str, clip_index: int,
+                                    body: ClipScriptureReferenceIn) -> dict:
+    """Edit clip display metadata without changing selection or export ownership."""
+    try:
+        reference = clip_metadata.clean_scripture_reference(body.scripture_reference)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    path = clip_selection.clips_path_for(name)
+    with clip_selection.clips_lock:
+        try:
+            collection = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="clips.json not found") from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail="clip list is unavailable") from exc
+        if (not isinstance(collection, dict) or collection.get("source") != name or
+                not isinstance(collection.get("clips"), list)):
+            raise HTTPException(status_code=409, detail="clip list is invalid")
+        clips = collection["clips"]
+        if clip_index < 0 or clip_index >= len(clips) or not isinstance(clips[clip_index], dict):
+            raise HTTPException(status_code=404, detail="clip out of range")
+        clip = clips[clip_index]
+        display = dict(clip)
+        clip_metadata.normalize_for_display(display, name, collection.get("clips_version"), clip_index)
+        if body.clip_id != display["id"]:
+            raise HTTPException(status_code=409, detail="clip changed; reload before editing")
+        if reference is None:
+            clip.pop("scripture_reference", None)
+        else:
+            clip["scripture_reference"] = reference
+        clip_selection.write_json_atomic(path, collection)
+    return {"scripture_reference": reference}
+
+
 @router.put("/{name}/clips/{clip_index}/overrides")
 def put_clip_overrides(name: str, clip_index: int, body: ClipOverridesIn) -> dict:
     """Save (upsert) the volunteer's edits for one clip.
