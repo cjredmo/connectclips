@@ -26,6 +26,7 @@ class TranscriptChainTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(jobs, "_start", new_callable=AsyncMock), \
              patch.object(jobs, "_save"), patch.object(jobs, "_finish"), \
              patch.object(jobs.transcribe, "transcribe_file", return_value={}), \
+             patch.object(jobs.youtube_captions, "acquire") as captions, \
              patch.object(jobs.transcribe, "write_transcript", return_value=self.transcript), \
              patch.object(jobs.transcribe, "transcript_path_for", return_value=self.transcript), \
              patch.object(jobs.transcript_repairs, "transcript_status", return_value=quality), \
@@ -35,6 +36,7 @@ class TranscriptChainTests(unittest.IsolatedAsyncioTestCase):
              patch.object(jobs, "create_select_clips_job") as selection:
             await jobs._run_transcribe(job, self.source)
         repair.assert_not_called()
+        captions.assert_not_called()
         alignment.assert_not_called()
         prescan.assert_called_once_with("sample.mp4", user_login=None, user_name=None)
         selection.assert_not_called()
@@ -103,7 +105,8 @@ class TranscriptChainTests(unittest.IsolatedAsyncioTestCase):
              patch.object(jobs, "_maybe_chain_transcribe") as transcription, \
              patch.object(jobs, "create_select_clips_job") as selection:
             await jobs._run_youtube(job, "https://example.com/video")
-        transcription.assert_called_once_with("sample.mp4", user_login=None, user_name=None)
+        transcription.assert_called_once_with("sample.mp4", youtube_url="https://example.com/video",
+                                              user_login=None, user_name=None)
         selection.assert_not_called()
 
 

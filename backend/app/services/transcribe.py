@@ -519,7 +519,7 @@ def transcript_path_for(source_name: str) -> Path:
 def write_transcript(transcript: dict) -> Path:
     out = transcript_path_for(transcript["source"])
     out.parent.mkdir(parents=True, exist_ok=True)
-    # Keep the first Whisper result as the permanent raw artifact. Repair and
+    # Keep the first transcript result as the permanent raw artifact. Repair and
     # human corrections are separate sidecars, never writes to this file.
     with out.open("x", encoding="utf-8") as handle:
         json.dump(transcript, handle, indent=2)

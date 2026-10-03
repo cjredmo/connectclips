@@ -7,8 +7,8 @@ the underlying services — those are the source of truth for *content*; the
 DB is the source of truth for *who/when/what triggered*.
 
 Main job kinds:
-  - "transcribe": runs faster-whisper on a file in sources/. Serialized via
-    a GPU lock — one transcription at a time on the 8 GB card.
+  - "transcribe": accepts usable native YouTube captions or runs the configured
+    local ASR backend on a file in sources/. Serialized with other transcript jobs.
   - "youtube_download": runs yt-dlp to fetch a video into sources/. Network /
     disk bound; runs without a lock.
   - "select_clips": sends an existing transcript to Claude and writes a
@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import logging
 import threading
 import traceback
 import uuid
@@ -32,7 +33,9 @@ from typing import Literal
 
 from app import db
 from app.config import settings
-from app.services import alignment_runner, captions, caption_styles, clip_precision, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
+from app.services import alignment_runner, captions, caption_styles, clip_precision, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner, youtube_captions
+
+logger = logging.getLogger(__name__)
 
 JobKind = Literal["transcribe", "repair_transcript", "align_transcript", "prepare_clip", "youtube_download", "select_clips", "export_clip", "upload", "prescan_faces"]
 JobStatus = Literal["queued", "running", "done", "failed"]
@@ -174,13 +177,24 @@ def _new_job(**kwargs) -> Job:
     return job
 
 
-def create_transcribe_job(source_name: str, *, user_login: str | None = None, user_name: str | None = None) -> Job:
+def create_transcribe_job(source_name: str, *, youtube_url: str | None = None,
+                          user_login: str | None = None, user_name: str | None = None) -> Job:
     src = settings.data_sources_dir / source_name
     if not src.is_file():
         raise FileNotFoundError(f"source not found: {source_name}")
     if transcribe.transcript_path_for(source_name).exists():
         raise ValueError("raw transcript already exists and is immutable")
-    job = _new_job(kind="transcribe", source=source_name, user_login=user_login, user_name=user_name)
+    # A downloaded video's original URL is in the durable download job. This
+    # also supports an explicit transcribe action after a server restart.
+    if youtube_url is None:
+        with db.cursor() as cur:
+            row = cur.execute(
+                "SELECT url FROM jobs WHERE kind = 'youtube_download' AND status = 'done' "
+                "AND ingested_filename = ? ORDER BY finished_at DESC LIMIT 1", (source_name,),
+            ).fetchone()
+        youtube_url = row["url"] if row else None
+    job = _new_job(kind="transcribe", source=source_name, url=youtube_url,
+                   user_login=user_login, user_name=user_name)
     asyncio.create_task(_run_transcribe(job, src))
     return job
 
@@ -498,7 +512,27 @@ async def _run_transcribe(job: Job, src: Path) -> None:
             _save(job)
 
         try:
-            transcript = await asyncio.to_thread(transcribe.transcribe_file, src, progress_cb)
+            transcript = None
+            if job.url:
+                job.progress_message = "Fetching YouTube transcript"
+                job.progress_percent = 0.0
+                _save(job)
+                try:
+                    transcript = await asyncio.to_thread(youtube_captions.acquire, job.url, src)
+                except Exception as exc:
+                    # Subtitle availability, retrieval, parsing and QC all
+                    # lead to the same configured local-ASR fallback.
+                    logger.warning("YouTube captions unavailable for %s: %s", src.name, exc)
+            if transcript is None:
+                job.progress_message = "Transcribing sermon"
+                job.progress_percent = 0.0
+                _save(job)
+                transcript = await asyncio.to_thread(transcribe.transcribe_file, src, progress_cb)
+                transcript["provenance"] = {
+                    "source": "local_asr", "language": transcript.get("language"),
+                    "backend": transcript.get("backend"), "model": transcript.get("model"),
+                    "acquired_at": transcript.get("created_at"),
+                }
             out = await asyncio.to_thread(transcribe.write_transcript, transcript)
             job.transcript_path = str(out)
             job.progress_message = "Checking transcript"
@@ -634,7 +668,8 @@ async def _run_youtube(job: Job, url: str) -> None:
         _save(job)
         _finish(job)
         # Auto-chain to transcribe so the volunteer doesn't have to babysit the pipeline.
-        _maybe_chain_transcribe(out.name, user_login=job.user_login, user_name=job.user_name)
+        _maybe_chain_transcribe(out.name, youtube_url=url,
+                                user_login=job.user_login, user_name=job.user_name)
     except Exception as exc:
         _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
 
@@ -708,7 +743,8 @@ async def _run_select_clips(
 # ---------- Auto-pipeline chaining --------------------------------------
 
 
-def _maybe_chain_transcribe(source_name: str, *, user_login: str | None = None, user_name: str | None = None) -> None:
+def _maybe_chain_transcribe(source_name: str, *, youtube_url: str | None = None,
+                            user_login: str | None = None, user_name: str | None = None) -> None:
     """Trigger transcribe iff the source exists and isn't already transcribed."""
     src = settings.data_sources_dir / source_name
     if not src.is_file():
@@ -716,7 +752,8 @@ def _maybe_chain_transcribe(source_name: str, *, user_login: str | None = None, 
     if transcribe.transcript_path_for(source_name).exists():
         return
     try:
-        create_transcribe_job(source_name, user_login=user_login, user_name=user_name)
+        create_transcribe_job(source_name, youtube_url=youtube_url,
+                              user_login=user_login, user_name=user_name)
     except Exception:
         # Auto-chain is best-effort — never fail the parent job because the next stage couldn't start.
         pass
