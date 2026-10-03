@@ -6,6 +6,7 @@ const KIND_LABELS: Record<Job['kind'], string> = {
   transcribe: 'Transcribing sermon',
   repair_transcript: 'Repairing transcript',
   align_transcript: 'Aligning transcript',
+  prepare_clip: 'Preparing captions',
   select_clips: 'Selecting clips',
   export_clip: 'Exporting clip',
   prescan_faces: 'Preparing framing',
@@ -13,7 +14,7 @@ const KIND_LABELS: Record<Job['kind'], string> = {
 
 export function activityLabel(job: Job): string {
   const label = KIND_LABELS[job.kind]
-  return job.kind === 'export_clip' && job.clip_index !== null
+  return (job.kind === 'export_clip' || job.kind === 'prepare_clip') && job.clip_index !== null
     ? `${label} ${job.clip_index + 1}` : label
 }
 

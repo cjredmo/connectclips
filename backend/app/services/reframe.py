@@ -44,7 +44,7 @@ import numpy as np
 from app import platform as plat
 from app.config import settings
 from app.services import captions
-from app.services.transcript_alignment import load_display_transcript
+from app.services import clip_precision
 from app.services.yunet_ort import YuNetORT
 
 # (message, percent in [0, 1]) → None. Called from the export pipeline to
@@ -1043,6 +1043,7 @@ def export_clip(
     identity_id: int | None = None,
     zoom_level: str | None = None,
     lock_camera: bool = False,
+    clip_id: str | None = None,
 ) -> dict:
     out_path = settings.data_clips_dir / output_name
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1061,8 +1062,8 @@ def export_clip(
         has_words = False
         words: list[captions.Word] = []
         if transcript_path is not None and transcript_path.is_file():
-            transcript = load_display_transcript(transcript_path)
-            words = captions.words_in_range(transcript, start, end)
+            words, _ = clip_precision.caption_words(source_path.name, clip_id,
+                                                    start, end, transcript_path)
             has_words = bool(words)
         full_clip_box = (isinstance(caption_style, captions.CaptionStyle) and
                          caption_style.background_box and

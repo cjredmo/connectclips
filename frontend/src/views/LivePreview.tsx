@@ -8,6 +8,7 @@ import { CaptionLine } from './CaptionLine'
 
 type Props = {
   sermon: string
+  clipId?: string
   clipStart: number
   clipEnd: number
   transcriptRevision?: number
@@ -69,7 +70,7 @@ function hookLines(title: string): { lines: string[]; fontSize: number } {
 }
 
 export function LivePreview({
-  sermon, clipStart, clipEnd, transcriptRevision, sourceVideoRef,
+  sermon, clipId, clipStart, clipEnd, transcriptRevision, sourceVideoRef,
   captionStyle, captionMarginV, onCaptionMarginVChange,
   includeHookTitle, hookTitle, identityId, zoomLevel, lockCamera, showPlacementGuide = false,
 }: Props) {
@@ -112,11 +113,11 @@ export function LivePreview({
   // Fetch words for caption rendering. Cheap — just a JSON slice.
   useEffect(() => {
     let cancelled = false
-    api.getTranscriptWords(sermon, clipStart, clipEnd)
+    api.getTranscriptWords(sermon, clipStart, clipEnd, clipId)
       .then((r) => { if (!cancelled) setWords(r.words) })
       .catch(() => { if (!cancelled) setWords([]) })
     return () => { cancelled = true }
-  }, [sermon, clipStart, clipEnd, transcriptRevision])
+  }, [sermon, clipId, clipStart, clipEnd, transcriptRevision])
 
   // Draw on animation frames so the preview also updates while the secondary
   // source player is collapsed. A hidden video need not receive video-frame

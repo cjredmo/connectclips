@@ -61,6 +61,26 @@ class SelectClipsRequest(BaseModel):
     num_clips_max: int = 8
 
 
+class PrepareClipRequest(BaseModel):
+    source: str
+    clip_id: str
+
+
+@router.post("/prepare-clip", status_code=201, dependencies=[Depends(require_admin)])
+async def retry_prepare_clip(body: PrepareClipRequest, request: Request) -> dict:
+    u = get_user(request)
+    try:
+        job = jobs.create_prepare_clip_job(body.source, body.clip_id, force=True,
+                                           user_login=u.login, user_name=u.name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if job is None:
+        raise HTTPException(status_code=409, detail="clip is already prepared")
+    return jobs.job_dict(job)
+
+
 @router.post("/select-clips", status_code=201)
 async def create_select_clips_job(body: SelectClipsRequest, request: Request) -> dict:
     u = get_user(request)

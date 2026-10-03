@@ -59,6 +59,7 @@ def init() -> None:
                 ingested_filename   TEXT,
                 clips_path          TEXT,
                 clip_index          INTEGER,
+                clip_id             TEXT,
                 start               REAL,
                 end                 REAL,
                 output_clip_path    TEXT,
@@ -90,6 +91,7 @@ def init() -> None:
             ("caption_style_revision", "ALTER TABLE jobs ADD COLUMN caption_style_revision INTEGER"),
             ("caption_style_hash", "ALTER TABLE jobs ADD COLUMN caption_style_hash TEXT"),
             ("caption_style_descriptor", "ALTER TABLE jobs ADD COLUMN caption_style_descriptor TEXT"),
+            ("clip_id", "ALTER TABLE jobs ADD COLUMN clip_id TEXT"),
         ):
             try:
                 c.execute(ddl)
@@ -98,6 +100,7 @@ def init() -> None:
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs (created_at DESC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_source     ON jobs (source)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_kind_clip  ON jobs (source, clip_index, kind, status)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_jobs_clip_id ON jobs (source, clip_id, kind, status)")
         # Anthropic API balance tracking — admin records each manual top-up
         # (Anthropic doesn't expose a balance endpoint; we estimate by
         # subtracting our local cost calc from the sum of recorded top-ups).

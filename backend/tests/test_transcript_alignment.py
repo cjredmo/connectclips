@@ -93,8 +93,8 @@ class AlignmentTests(unittest.TestCase):
     def test_shared_preview_and_export_timing_reader(self):
         from app.routers import sermons
         from app.services import reframe
-        self.assertIs(reframe.load_display_transcript,
-                      sermons.transcript_alignment.load_display_transcript)
+        self.assertIs(reframe.clip_precision.caption_words,
+                      sermons.clip_precision.caption_words)
         transcript_alignment.write(self.path, self.candidate())
         with patch.object(sermons.settings, "data_sources_dir", Path(self.temp.name)), \
              patch.object(sermons, "transcript_path_for", return_value=self.path):

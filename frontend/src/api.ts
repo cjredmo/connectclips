@@ -1,4 +1,4 @@
-import type { CaptionStyle, Clip, ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
+import type { CaptionStyle, Clip, ClipPreparation, ClipsFile, ClipUserEdits, IdentitiesResponse, Job, Me, RawTranscriptWord, Sermon, Track, TranscriptEdit, TranscriptResponse, TranscriptStatus, TranscriptWord, UsageResponse } from './types'
 import { parseCaptionStylesResponse } from './captionStyles'
 import { normalizeTranscriptResponse, normalizeTranscriptStatus } from './transcriptResponse'
 import { normalizePromptLibrary } from './clipPrompts'
@@ -34,6 +34,13 @@ export const api = {
 
   listSermons: () => jsonFetch<Sermon[]>('/sermons'),
   getClips: (name: string) => jsonFetch<ClipsFile>(`/sermons/${encodeURIComponent(name)}/clips`),
+  getClipPreparation: (name: string, index: number, clipId: string) =>
+    jsonFetch<ClipPreparation>(`/sermons/${encodeURIComponent(name)}/clips/${index}/preparation` +
+      `?clip_id=${encodeURIComponent(clipId)}`),
+  retryClipPreparation: (name: string, clipId: string) =>
+    jsonFetch<Job>('/jobs/prepare-clip', {
+      method: 'POST', body: JSON.stringify({ source: name, clip_id: clipId }),
+    }),
   createManualClip: (name: string, clip: ManualClipPayload) =>
     jsonFetch<{ clip_index: number; clip: Clip }>(
       `/sermons/${encodeURIComponent(name)}/clips/manual`,
@@ -144,9 +151,10 @@ export const api = {
   // Word-level transcript timings within a range — drives the JS caption
   // overlay. Returns clip-relative offsets so the renderer can compare
   // directly against (videoEl.currentTime - clip.start).
-  getTranscriptWords: (source: string, start: number, end: number) =>
+  getTranscriptWords: (source: string, start: number, end: number, clipId?: string) =>
     jsonFetch<{ start: number; end: number; words: TranscriptWord[] }>(
-      `/sermons/${encodeURIComponent(source)}/transcript-words?start=${start}&end=${end}`,
+      `/sermons/${encodeURIComponent(source)}/transcript-words?start=${start}&end=${end}` +
+      (clipId ? `&clip_id=${encodeURIComponent(clipId)}` : ''),
     ),
 
   getTranscript: (source: string, start?: number, end?: number) =>

@@ -3,6 +3,7 @@ import { fileUrl } from '../api'
 import { selectionLabel } from '../clipProvenance'
 import { dateLabel, formatClipTime, suitability } from '../clipLibrary'
 import { hookScoreStyle } from '../hookScore'
+import { preparationLabel } from '../clipPreparation'
 import type { Clip, Sermon } from '../types'
 
 export type ClipAction = (clip: Clip, index: number) => void
@@ -13,6 +14,7 @@ export function ClipMediaCard({ sermon, clip, index, onPreview, onEdit, status }
   const [imageFailed, setImageFailed] = useState(false)
   const score = suitability(clip)
   const excerpt = clip.hook || clip.description
+  const displayStatus = status ?? preparationLabel(clip.preparation)
   return <article className="media-card">
     <div className="media-card-top">
       <button type="button" className="media-card-image" onClick={() => onPreview(clip, index)}
@@ -35,7 +37,7 @@ export function ClipMediaCard({ sermon, clip, index, onPreview, onEdit, status }
       <span className="media-card-tag">{selectionLabel(clip)}</span>
       {clip.exported && <span className="media-card-tag is-exported">Exported</span>}
       {!clip.exported && clip.stale_export && <span className="media-card-tag">Previous export</span>}
-      {status && <span className="media-card-tag">{status}</span>}
+      {displayStatus && <span className="media-card-tag">{displayStatus}</span>}
     </div>
     <div className="media-card-quote">
       <div className="media-card-timing"><span>{formatClipTime(clip.start)} → {formatClipTime(clip.end)}</span>

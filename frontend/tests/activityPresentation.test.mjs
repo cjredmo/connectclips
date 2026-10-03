@@ -13,7 +13,8 @@ test('job kinds have readable labels without changing backend values', () => {
   const labels = {
     upload: 'Uploading source video', youtube_download: 'Importing source video',
     transcribe: 'Transcribing sermon', repair_transcript: 'Repairing transcript',
-    align_transcript: 'Aligning transcript', select_clips: 'Selecting clips',
+    align_transcript: 'Aligning transcript', prepare_clip: 'Preparing captions',
+    select_clips: 'Selecting clips',
     export_clip: 'Exporting clip', prescan_faces: 'Preparing framing',
   }
   for (const [kind, label] of Object.entries(labels)) {
@@ -21,6 +22,8 @@ test('job kinds have readable labels without changing backend values', () => {
   }
   assert.equal(activityLabel(job('one', 'export_clip', 'running', '2026-01-01', { clip_index: 2 })),
     'Exporting clip 3')
+  assert.equal(activityLabel(job('two', 'prepare_clip', 'running', '2026-01-01', { clip_index: 1 })),
+    'Preparing captions 2')
 })
 
 test('active work leads, failed work follows, and completion stays newest first', () => {

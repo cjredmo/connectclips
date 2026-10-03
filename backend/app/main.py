@@ -60,7 +60,7 @@ from app.routers import me as me_router
 from app.routers import publish_targets as publish_targets_router
 from app.routers import sermons as sermons_router
 from app.routers import usage as usage_router
-from app.services import captions, caption_styles as caption_style_store
+from app.services import captions, caption_styles as caption_style_store, jobs as job_service
 
 # repo root → frontend/dist (built SPA)
 _SPA_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
@@ -76,6 +76,7 @@ async def lifespan(app: FastAPI):
     # caused encode-thread hangs (CUDA context initialized in the wrong
     # context, or ctranslate2 import racing with the ffmpeg subprocess).
     plat.initialize()
+    job_service.resume_queued_preparations()
     # Static mounts must be added before the SPA catch-all below, so they take priority
     app.mount("/files/sources", StaticFiles(directory=settings.data_sources_dir), name="sources")
     app.mount("/files/clips", StaticFiles(directory=settings.data_clips_dir), name="clips")

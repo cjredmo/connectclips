@@ -49,6 +49,7 @@ transcript.json
 transcript_edits.json
 transcript_repairs.json
 alignment.json
+clip_precision/
 caption_styles.json
 clip_prompts.json
 clips.json

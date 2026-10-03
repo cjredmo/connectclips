@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api, fileUrl } from '../api'
-import type { CaptionStyle, Clip, ClipUserEdits, Identity, Job, Sermon, ZoomLevel } from '../types'
+import type { CaptionStyle, Clip, ClipPreparation, ClipUserEdits, Identity, Job, Sermon, ZoomLevel } from '../types'
+import { preparationLabel } from '../clipPreparation'
 import { Publish } from './Publish'
 import { CaptionStylePicker } from './CaptionStylePicker'
 import { CaptionStyleEditor } from './CaptionStyleEditor'
@@ -83,6 +84,11 @@ export function Trim({ sermon, clip, clipIndex, clipCount, onBack, onNavigateCli
   const [switchingClip, setSwitchingClip] = useState(false)
   const [showTranscript, setShowTranscript] = useState(false)
   const [transcriptRevision, setTranscriptRevision] = useState(0)
+  const [preparation, setPreparation] = useState<ClipPreparation | undefined>(clip.preparation)
+  const [preparationRevision, setPreparationRevision] = useState(0)
+  const lastPreparationRevision = useRef(clip.preparation?.revision ?? null)
+  const [retryingPreparation, setRetryingPreparation] = useState(false)
+  const [preparationError, setPreparationError] = useState<string | null>(null)
   const [inspectorSection, setInspectorSection] = useState<'trim' | 'framing' | 'captions' | 'export'>('trim')
   const [showPlacementGuide, setShowPlacementGuide] = useState(false)
   const [scriptureDraft, setScriptureDraft] = useState(clip.scripture_reference ?? '')
@@ -132,6 +138,24 @@ export function Trim({ sermon, clip, clipIndex, clipCount, onBack, onNavigateCli
   const [lockCamera, setLockCamera] = useState<boolean>(
     userEdits.lock_camera ?? false,
   )
+
+  useEffect(() => {
+    let cancelled = false
+    const tick = () => {
+      api.getClipPreparation(sermon.name, clipIndex, clip.id).then(result => {
+        if (cancelled) return
+        setPreparation(result)
+        if (result.status === 'ready' && result.revision &&
+            result.revision !== lastPreparationRevision.current) {
+          lastPreparationRevision.current = result.revision
+          setPreparationRevision(value => value + 1)
+        }
+      }).catch(() => { /* The editor remains usable with fallback captions. */ })
+    }
+    tick()
+    const timer = window.setInterval(tick, 3000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [sermon.name, clipIndex, clip.id])
 
   useEffect(() => {
     api.captionStyles()
@@ -369,6 +393,20 @@ export function Trim({ sermon, clip, clipIndex, clipCount, onBack, onNavigateCli
   }
   useLayoutEffect(() => { flushEditorRef.current = flushEditor })
 
+  const retryPreparation = async () => {
+    setRetryingPreparation(true)
+    setPreparationError(null)
+    try {
+      await flushEditorRef.current()
+      await api.retryClipPreparation(sermon.name, clip.id)
+      setPreparation({ status: 'preparing' })
+    } catch (cause) {
+      setPreparationError(String(cause))
+    } finally {
+      setRetryingPreparation(false)
+    }
+  }
+
   // Loop within [start, end] when looping is on
   useEffect(() => {
     const v = videoRef.current
@@ -574,6 +612,13 @@ export function Trim({ sermon, clip, clipIndex, clipCount, onBack, onNavigateCli
               timeDraftPending ? 'Unsaved edit' :
               saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? 'Saved' : ''}
           </span>
+          <span className="muted small" role="status">
+            {preparationLabel(preparation)}{' '}
+            {admin && (preparation?.status === 'failed' || preparation?.status === 'stale') &&
+              <button type="button" className="tertiary" disabled={retryingPreparation}
+                onClick={() => { void retryPreparation() }}>Retry</button>}
+          </span>
+          {preparationError && <span className="error-inline" role="alert">{preparationError}</span>}
         </div>
         <div className="editor-title-row">
           <div>
@@ -616,8 +661,8 @@ export function Trim({ sermon, clip, clipIndex, clipCount, onBack, onNavigateCli
           </div>
           <div className="editor-preview-frame">
             <LivePreview
-              sermon={sermon.name} clipStart={start} clipEnd={end}
-              transcriptRevision={transcriptRevision} sourceVideoRef={videoRef}
+              sermon={sermon.name} clipId={clip.id} clipStart={start} clipEnd={end}
+              transcriptRevision={transcriptRevision + preparationRevision} sourceVideoRef={videoRef}
               captionStyle={selectedStyle ?? null} captionMarginV={captionMarginV}
               onCaptionMarginVChange={setCaptionMarginVU} includeHookTitle={includeHookTitle}
               hookTitle={clip.title} identityId={identityId} zoomLevel={zoomLevel}

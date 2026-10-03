@@ -99,6 +99,14 @@ export type Clip = {
   user_edits?: ClipUserEdits
   // Claude's untouched start/end -- for a future "Reset to suggestion" button.
   original?: { start: number; end: number }
+  preparation?: ClipPreparation
+}
+
+export type ClipPreparation = {
+  status: 'waiting' | 'preparing' | 'ready' | 'failed' | 'stale' | 'needs_review'
+  reason?: string | null
+  revision?: string | null
+  job_id?: string
 }
 
 export type Track = {
@@ -261,7 +269,8 @@ export type UsageResponse = {
 
 export type Job = {
   id: string
-  kind: 'transcribe' | 'repair_transcript' | 'align_transcript' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
+  kind: 'transcribe' | 'repair_transcript' | 'align_transcript' | 'prepare_clip' | 'youtube_download' | 'select_clips' | 'export_clip' | 'upload' | 'prescan_faces'
+  clip_id?: string | null
   status: JobStatus
   source: string | null
   transcript_path: string | null

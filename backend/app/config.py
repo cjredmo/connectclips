@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     alignment_model_dir: str = ""
     alignment_device: str = "cpu"
     alignment_language: str = "en"
+    # Extra source audio around a selected clip for local caption preparation.
+    clip_preparation_padding_seconds: float = 8.0
 
     # whispercli backend: path to the whisper-cli(.exe) binary and the dir
     # holding ggml-<model>.bin files. Empty = look on PATH for the binary

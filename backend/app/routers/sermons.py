@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.identity import get_user
 from app.routers.auth import require_admin
-from app.services import captions, clip_import, clip_metadata, clip_overrides, clip_selection, clip_thumbnails, ingest, jobs, manual_clips, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
+from app.services import captions, clip_import, clip_metadata, clip_overrides, clip_precision, clip_selection, clip_thumbnails, ingest, jobs, manual_clips, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
 from app.services.transcribe import transcript_path_for
 
 
@@ -144,7 +144,8 @@ def get_identity_thumb(name: str, identity_id: int):
 
 
 @router.get("/{name}/transcript-words")
-def get_transcript_words(name: str, start: float = 0.0, end: float | None = None) -> dict:
+def get_transcript_words(name: str, start: float = 0.0, end: float | None = None,
+                         clip_id: str | None = None) -> dict:
     """Return word-level timings within [start, end] (clip-relative seconds).
 
     Used by the frontend live caption preview: the JS renderer fetches this
@@ -153,10 +154,10 @@ def get_transcript_words(name: str, start: float = 0.0, end: float | None = None
     can map them directly against the source video's currentTime - start.
     """
     transcript_path = _checked_transcript_path(name)
-    transcript = transcript_alignment.load_display_transcript(transcript_path)
     if end is None:
+        transcript = transcript_alignment.load_display_transcript(transcript_path)
         end = float(transcript.get("duration") or 1e9)
-    words = captions.words_in_range(transcript, start, end)
+    words, _ = clip_precision.caption_words(name, clip_id, start, end, transcript_path)
     return {
         "start": start,
         "end": end,
@@ -260,6 +261,8 @@ def get_clips(name: str) -> dict:
     overrides = clip_overrides.load_overrides(name)
     clip_overrides.merge_into_clips(data.get("clips", []), overrides)
     for i, clip in enumerate(data.get("clips", [])):
+        clip["preparation"] = jobs.preparation_status(name, clip["id"],
+                                                       float(clip["start"]), float(clip["end"]))
         # Current-version export: file exists at the versioned path.
         out = _exported_clip_path(name, i, current_version)
         # Most recent export of any version (used both for attribution and to
@@ -332,19 +335,20 @@ class ManualClipIn(BaseModel):
 
 
 @router.post("/{name}/clips/manual", status_code=201, dependencies=[Depends(require_admin)])
-def create_manual_clip(name: str, body: ManualClipIn) -> dict:
+async def create_manual_clip(name: str, body: ManualClipIn) -> dict:
     transcript_path = _checked_transcript_path(name)
     try:
-        index, _ = manual_clips.create(name, transcript_path, body.title, body.start, body.end,
-                                       body.scripture_reference)
+        index, clip = manual_clips.create(name, transcript_path, body.title, body.start, body.end,
+                                          body.scripture_reference)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    jobs.schedule_saved_clip(name, clip["id"])
     # The same decorated clip shape consumed by Trim and LivePreview.
     return {"clip_index": index, "clip": get_clips(name)["clips"][index]}
 
 
 @router.post("/{name}/clips/import", dependencies=[Depends(require_admin)])
-def import_clip_json(name: str, body: Any = Body(...)) -> dict:
+async def import_clip_json(name: str, body: Any = Body(...)) -> dict:
     transcript_path = _checked_transcript_path(name)
     try:
         if isinstance(body, dict) and ("payload" in body or "provenance" in body):
@@ -356,6 +360,9 @@ def import_clip_json(name: str, body: Any = Body(...)) -> dict:
             result = clip_import.import_clips(name, transcript_path, body)
     except clip_import.ClipImportError as exc:
         raise HTTPException(status_code=400, detail="Import rejected:\n" + "\n".join(exc.errors)) from exc
+    stored = json.loads(clip_selection.clips_path_for(name).read_text(encoding="utf-8"))["clips"]
+    for index in result["indices"]:
+        jobs.schedule_saved_clip(name, stored[index]["id"])
     listed = get_clips(name)["clips"]
     return {"imported": result["imported"],
             "duplicates_skipped": result["duplicates_skipped"],
@@ -418,7 +425,7 @@ def update_clip_scripture_reference(name: str, clip_index: int,
 
 
 @router.put("/{name}/clips/{clip_index}/overrides")
-def put_clip_overrides(name: str, clip_index: int, body: ClipOverridesIn) -> dict:
+async def put_clip_overrides(name: str, clip_index: int, body: ClipOverridesIn) -> dict:
     """Save (upsert) the volunteer's edits for one clip.
 
     Validates that the clip index actually exists in the current
@@ -429,21 +436,57 @@ def put_clip_overrides(name: str, clip_index: int, body: ClipOverridesIn) -> dic
     clips_path = clip_selection.clips_path_for(name)
     if not clips_path.exists():
         raise HTTPException(status_code=404, detail="clips.json not found")
-    n = len(json.loads(clips_path.read_text()).get("clips", []))
+    collection = json.loads(clips_path.read_text())
+    n = len(collection.get("clips", []))
     if clip_index < 0 or clip_index >= n:
         raise HTTPException(status_code=404, detail=f"clip {clip_index} out of range")
+    clip = dict(collection["clips"][clip_index])
+    clip_metadata.normalize_for_display(clip, name, collection.get("clips_version"), clip_index)
+    old = clip_overrides.load_overrides(name).get(str(clip_index), {})
+    before = (float(old.get("start", clip["start"])), float(old.get("end", clip["end"])))
     try:
         clip_overrides.save_override(name, clip_index, body.model_dump())
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    after = clip_precision.current_clip(name, clip["id"])[1:]
+    if after != before:
+        jobs.schedule_saved_clip(name, clip["id"])
     return {"saved": True}
 
 
 @router.delete("/{name}/clips/{clip_index}/overrides")
-def delete_clip_overrides(name: str, clip_index: int) -> dict:
+async def delete_clip_overrides(name: str, clip_index: int) -> dict:
     """Reset this clip back to Claude's suggestion (no overrides)."""
+    listed = get_clips(name)["clips"]
+    if clip_index < 0 or clip_index >= len(listed):
+        raise HTTPException(status_code=404, detail="clip out of range")
+    clip = listed[clip_index]
+    before = (float(clip["start"]), float(clip["end"]))
     clip_overrides.delete_override(name, clip_index)
+    after = clip_precision.current_clip(name, clip["id"])[1:]
+    if after != before:
+        jobs.schedule_saved_clip(name, clip["id"])
     return {"deleted": True}
+
+
+@router.get("/{name}/clips/{clip_index}/preparation")
+def get_clip_preparation(name: str, clip_index: int, clip_id: str) -> dict:
+    _checked_transcript_path(name)
+    path = clip_selection.clips_path_for(name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="clip list not found")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    clips = data.get("clips", [])
+    if clip_index < 0 or clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="clip out of range")
+    clip = dict(clips[clip_index])
+    clip_metadata.normalize_for_display(clip, name, data.get("clips_version"), clip_index)
+    if clip["id"] != clip_id:
+        raise HTTPException(status_code=409, detail="clip selection changed")
+    override = clip_overrides.load_overrides(name).get(str(clip_index), {})
+    start = float(override.get("start", clip["start"]))
+    end = float(override.get("end", clip["end"]))
+    return jobs.preparation_status(name, clip_id, start, end)
 
 
 class SermonMetaIn(BaseModel):

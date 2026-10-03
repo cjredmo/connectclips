@@ -42,6 +42,11 @@ class ClipImportTests(unittest.TestCase):
         lookup = patch.object(jobs, "latest_export_for_clip", return_value=None)
         lookup.start()
         self.addCleanup(lookup.stop)
+        for name, value in (("schedule_saved_clip", None),
+                            ("preparation_status", {"status": "waiting"})):
+            scoped = patch.object(jobs, name, return_value=value)
+            scoped.start()
+            self.addCleanup(scoped.stop)
         self.path = clip_selection.clips_path_for(source.name)
 
     def import_json(self, clips, version=1):
@@ -67,6 +72,8 @@ class ClipImportTests(unittest.TestCase):
         self.assertEqual(first["selection_batch_id"], second["selection_batch_id"])
         self.assertTrue(first["selection_created_at"])
         self.assertNotEqual(first["id"], second["id"])
+        self.assertEqual([call.args for call in jobs.schedule_saved_clip.call_args_list],
+                         [("sample.mp4", first["id"]), ("sample.mp4", second["id"])])
         self.assertNotIn("score", second)
         version = stored["clips_version"]
         duplicate = self.import_json(clips)

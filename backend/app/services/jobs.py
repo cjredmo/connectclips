@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import threading
 import traceback
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -31,14 +32,14 @@ from typing import Literal
 
 from app import db
 from app.config import settings
-from app.services import alignment_runner, captions, caption_styles, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
+from app.services import alignment_runner, captions, caption_styles, clip_precision, clip_selection, ingest, reframe, transcribe, transcript_alignment, transcript_repairs, transcript_repair_runner
 
-JobKind = Literal["transcribe", "repair_transcript", "align_transcript", "youtube_download", "select_clips", "export_clip", "upload", "prescan_faces"]
+JobKind = Literal["transcribe", "repair_transcript", "align_transcript", "prepare_clip", "youtube_download", "select_clips", "export_clip", "upload", "prescan_faces"]
 JobStatus = Literal["queued", "running", "done", "failed"]
 
 _JOB_COLUMNS = (
     "id", "kind", "status", "source", "transcript_path", "url",
-    "ingested_filename", "clips_path", "clip_index", "start", "end",
+    "ingested_filename", "clips_path", "clip_index", "clip_id", "start", "end",
     "output_clip_path", "identity_id", "user_login", "user_name",
     "progress_percent", "progress_message", "clips_version",
     "caption_style_id", "caption_style_name", "caption_style_revision",
@@ -62,6 +63,7 @@ class Job:
     clips_path: str | None = None
     # export_clip fields
     clip_index: int | None = None
+    clip_id: str | None = None
     start: float | None = None
     end: float | None = None
     output_clip_path: str | None = None
@@ -94,6 +96,7 @@ class Job:
 
 
 _gpu_lock = asyncio.Lock()
+_prepare_lock = threading.Lock()
 
 
 # ---------- DB I/O ----------------------------------------------------------
@@ -297,6 +300,90 @@ def create_select_clips_job(
     return job
 
 
+def latest_preparation(source_name: str, clip_id: str) -> Job | None:
+    with db.cursor() as cur:
+        row = cur.execute(
+            "SELECT * FROM jobs WHERE kind = 'prepare_clip' AND source = ? AND clip_id = ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT 1", (source_name, clip_id),
+        ).fetchone()
+    return _row_to_job(row) if row else None
+
+
+def preparation_status(source_name: str, clip_id: str, start: float, end: float) -> dict:
+    assessed = clip_precision.assess(source_name, clip_id, start, end)
+    if assessed["status"] in {"ready", "needs_review"}:
+        return {"status": assessed["status"], "reason": assessed.get("reason"),
+                "revision": assessed.get("artifact", {}).get("prepared_at")}
+    latest = latest_preparation(source_name, clip_id)
+    if latest and latest.status in {"queued", "running"}:
+        return {"status": "preparing", "reason": None, "job_id": latest.id}
+    if latest and latest.status == "failed":
+        return {"status": "failed", "reason": "preparation_failed", "job_id": latest.id}
+    return {"status": assessed["status"], "reason": assessed.get("reason")}
+
+
+def create_prepare_clip_job(source_name: str, clip_id: str, *, force: bool = False,
+                            user_login: str | None = None,
+                            user_name: str | None = None) -> Job | None:
+    """Schedule after durable clip write. One active job per stable clip ID."""
+    clip_precision.artifact_path(source_name, clip_id)
+    src = settings.data_sources_dir / source_name
+    path = transcribe.transcript_path_for(source_name)
+    if not src.is_file() or not path.is_file():
+        raise FileNotFoundError("source and effective transcript are required")
+    index, start, end = clip_precision.current_clip(source_name, clip_id)
+    with _prepare_lock:
+        assessed = clip_precision.assess(source_name, clip_id, start, end, path)
+        if assessed["status"] == "ready" and not force:
+            return None
+        latest = latest_preparation(source_name, clip_id)
+        if latest and latest.status in {"queued", "running"}:
+            return latest
+        # A failure stays actionable rather than spawning work on every trim
+        # autosave. Explicit Retry is the only way to repeat failed inference.
+        if latest and latest.status == "failed" and not force:
+            return None
+        job = _new_job(kind="prepare_clip", source=source_name, clip_id=clip_id,
+                       clip_index=index, start=start, end=end,
+                       user_login=user_login, user_name=user_name)
+        asyncio.create_task(_run_prepare_clip(job))
+        return job
+
+
+def schedule_saved_clip(source_name: str, clip_id: str, *,
+                        user_login: str | None = None,
+                        user_name: str | None = None) -> Job | None:
+    """Keep a durable clip when its background work cannot be scheduled."""
+    try:
+        return create_prepare_clip_job(source_name, clip_id,
+                                       user_login=user_login, user_name=user_name)
+    except Exception as exc:
+        latest = latest_preparation(source_name, clip_id)
+        if latest and latest.status in {"queued", "running", "failed"}:
+            return latest
+        job = _new_job(kind="prepare_clip", source=source_name, clip_id=clip_id,
+                       user_login=user_login, user_name=user_name)
+        job.progress_message = "Clip preparation could not start"
+        _finish(job, f"{type(exc).__name__}: {exc}")
+        return job
+
+
+def resume_queued_preparations() -> None:
+    """Restore background clip work after an application restart."""
+    with db.cursor() as cur:
+        rows = cur.execute(
+            "SELECT * FROM jobs WHERE kind = 'prepare_clip' AND status IN ('queued', 'running') "
+            "ORDER BY created_at"
+        ).fetchall()
+    for row in rows:
+        job = _row_to_job(row)
+        job.status = "queued"
+        job.started_at = None
+        job.progress_message = "Waiting to prepare clip"
+        _save(job)
+        asyncio.create_task(_run_prepare_clip(job))
+
+
 def _ensure_transcript_selectable(transcript_path: Path) -> None:
     status = transcript_repairs.transcript_status(transcript_path)
     if status["effective_quality"]["status"] not in {"clean", "warning"} or status["human_review_required"]:
@@ -329,6 +416,10 @@ def create_export_clip_job(
     if not (0 <= clip_index < len(clips_data["clips"])):
         raise ValueError(f"clip_index {clip_index} out of range (0..{len(clips_data['clips'])-1})")
     clip = clips_data["clips"][clip_index]
+    clip_for_identity = dict(clip)
+    from app.services import clip_metadata
+    clip_metadata.normalize_for_display(clip_for_identity, source_name,
+                                        clips_data.get("clips_version"), clip_index)
     start = float(start_override) if start_override is not None else float(clip["start"])
     end = float(end_override) if end_override is not None else float(clip["end"])
     if end <= start:
@@ -347,7 +438,7 @@ def create_export_clip_job(
     hook_title = clip.get("title") if include_hook_title else None
     job = _new_job(
         kind="export_clip", source=source_name,
-        clip_index=clip_index, start=start, end=end,
+        clip_index=clip_index, clip_id=clip_for_identity["id"], start=start, end=end,
         clips_version=clips_version,
         caption_style_id=style_snapshot["id"],
         caption_style_name=style_snapshot["name"],
@@ -366,6 +457,7 @@ def create_export_clip_job(
         identity_id,
         zoom_level,
         lock_camera,
+        clip_for_identity["id"],
     ))
     return job
 
@@ -482,6 +574,38 @@ async def _run_alignment(job: Job, src: Path, transcript_path: Path) -> None:
             return
 
 
+async def _run_prepare_clip(job: Job) -> None:
+    async with _gpu_lock:
+        await _start(job)
+
+        def progress_cb(message: str, percent: float) -> None:
+            job.progress_message = message
+            job.progress_percent = max(0.0, min(1.0, percent))
+            _save(job)
+
+        try:
+            index, start, end = clip_precision.current_clip(job.source, job.clip_id)
+            job.clip_index, job.start, job.end = index, start, end
+            _save(job)
+            await asyncio.to_thread(clip_precision.prepare, job.source, job.clip_id,
+                                    start, end, progress_cb)
+            job.progress_percent = 1.0
+            job.progress_message = "Clip ready"
+            _finish(job)
+        except Exception as exc:
+            job.progress_message = "Clip preparation failed"
+            _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+            return
+    # A queued job reads the newest trim when it starts. If the trim extended
+    # again while inference ran, schedule one follow-up after the lock releases.
+    try:
+        _, latest_start, latest_end = clip_precision.current_clip(job.source, job.clip_id)
+        if clip_precision.assess(job.source, job.clip_id, latest_start, latest_end)["status"] == "stale":
+            create_prepare_clip_job(job.source, job.clip_id)
+    except (OSError, ValueError):
+        pass
+
+
 async def _run_youtube(job: Job, url: str) -> None:
     await _start(job)
 
@@ -569,6 +693,16 @@ async def _run_select_clips(
         _finish(job)
     except Exception as exc:
         _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+        return
+    # The selection result is durable. A preparation problem must not change
+    # its successful status or discard any selected clip.
+    try:
+        for clip in json.loads(out.read_text(encoding="utf-8"))["clips"]:
+            if clip.get("id"):
+                schedule_saved_clip(job.source, clip["id"],
+                                    user_login=job.user_login, user_name=job.user_name)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
 
 
 # ---------- Auto-pipeline chaining --------------------------------------
@@ -624,6 +758,7 @@ async def _run_export_clip(
     identity_id: int | None = None,
     zoom_level: str | None = None,
     lock_camera: bool = False,
+    clip_id: str | None = None,
 ) -> None:
     await _start(job)
 
@@ -646,7 +781,7 @@ async def _run_export_clip(
         result = await asyncio.to_thread(
             reframe.export_clip, src, job.start, job.end, output_name, transcript_path,
             progress_cb, caption_style, hook_title, caption_margin_v, identity_id,
-            zoom_level, lock_camera,
+            zoom_level, lock_camera, clip_id,
         )
         job.output_clip_path = result["output"]
         job.progress_percent = 1.0

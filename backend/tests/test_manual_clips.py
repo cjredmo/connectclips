@@ -39,6 +39,11 @@ class ManualClipTests(unittest.TestCase):
         export_lookup = patch.object(jobs, "latest_export_for_clip", return_value=None)
         export_lookup.start()
         self.addCleanup(export_lookup.stop)
+        for name, value in (("schedule_saved_clip", None),
+                            ("preparation_status", {"status": "waiting"})):
+            scoped = patch.object(jobs, name, return_value=value)
+            scoped.start()
+            self.addCleanup(scoped.stop)
 
     def test_create_and_retrieve_without_ai_metadata(self):
         app.dependency_overrides[require_admin] = lambda: None
@@ -64,6 +69,7 @@ class ManualClipTests(unittest.TestCase):
         self.assertNotIn("rationale", listed["clips"][0])
         self.assertIsNone(clip["scripture_reference"])
         self.assertEqual(self.transcript.read_bytes(), self.original_transcript)
+        jobs.schedule_saved_clip.assert_called_once_with("sample.mp4", clip["id"])
 
     def test_optional_scripture_reference_on_manual_clip(self):
         app.dependency_overrides[require_admin] = lambda: None

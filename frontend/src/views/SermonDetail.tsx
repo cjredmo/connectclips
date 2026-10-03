@@ -182,14 +182,14 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
         if (cancelled) return
         const mine = jobs.filter((j) => j.source === sermon.name)
         setActiveJobs(mine)
-        const newlyCompleted = mine.filter(j => j.status === 'done' &&
+        const newlyCompleted = mine.filter(j => (j.status === 'done' || j.status === 'failed') &&
           !seenCompletedJobs.current.has(j.id))
         newlyCompleted.forEach(j => seenCompletedJobs.current.add(j.id))
-        if (newlyCompleted.some(j => j.kind === 'transcribe' || j.kind === 'select_clips')) {
+        if (newlyCompleted.some(j => j.status === 'done' &&
+          (j.kind === 'transcribe' || j.kind === 'select_clips'))) {
           await onSermonUpdated(sermon.name)
         }
-        // If anything just finished, refresh clips
-        if (mine.some((j) => j.status === 'done' && j.kind !== 'transcribe')) {
+        if (newlyCompleted.some(j => j.kind !== 'transcribe')) {
           refreshClips()
         }
       } catch { /* the next poll will retry */ }
