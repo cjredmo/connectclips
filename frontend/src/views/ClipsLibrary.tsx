@@ -5,6 +5,7 @@ import type { SermonClips } from '../clipLibrary'
 import type { Clip, Sermon } from '../types'
 import { ClipGroupGrid } from '../components/ClipGroupGrid'
 import { ClipPreviewModal } from '../components/ClipPreviewModal'
+import { StatePanel } from '../components/StatePanel'
 
 async function loadLibrary(): Promise<{ collections: SermonClips[]; failures: number }> {
   const sermons = await api.listSermons()
@@ -62,14 +63,18 @@ export function ClipsLibrary({ query, onQueryChange, onEdit }: {
         : collections ? `${visibleCount} ${visibleCount === 1 ? 'clip' : 'clips'}` : 'All clips'}</span>
       {query && <button type="button" className="media-filter-reset" onClick={() => onQueryChange('')}>Clear search</button>}
     </div>
-    {error && <p className="error">Could not load the library: {error}</p>}
+    {error && <StatePanel kind="error" title="Clips could not be loaded" detail={error}
+      action={<button type="button" className="secondary" onClick={() => void refresh()}>Try again</button>}>
+      Check the connection and try again.
+    </StatePanel>}
     {partialFailures > 0 && <p role="status" className="error-inline">{partialFailures} sermon clip list{partialFailures === 1 ? '' : 's'} could not be loaded.</p>}
-    {!collections && !error && <p className="muted">Loading clips…</p>}
-    {collections && library.length === 0 && <p className="empty">
+    {!collections && !error && <StatePanel kind="loading" title="Loading clips">Getting saved clip suggestions.</StatePanel>}
+    {collections && library.length === 0 && <StatePanel kind="empty"
+      title={query ? 'No matching clips' : 'No clips yet'}>
       {query ? 'No clips match your search.' : partialFailures
         ? 'No clips could be displayed. Refresh to try the unavailable sermon lists again.'
         : 'No clips yet. Create clips from a sermon workspace.'}
-    </p>}
+    </StatePanel>}
     {library.map(({ sermon, groups, count }) => <section className="media-sermon-group" key={sermon.name}>
       <div className="media-sermon-heading"><div><h2>{sermon.name}</h2><p className="muted">{dateLabel(sermon)}</p></div>
         <span className="muted small">{count} {count === 1 ? 'clip' : 'clips'}</span></div>

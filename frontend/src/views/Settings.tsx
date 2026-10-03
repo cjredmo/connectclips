@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { PageHeader } from '../components/PageHeader'
+import { StatePanel } from '../components/StatePanel'
 
 type Props = {
   onBack: () => void
@@ -51,7 +52,11 @@ export function Settings({ onBack }: Props) {
   }
 
   if (!loaded) {
-    return <div className="muted" style={{ padding: 24 }}>Loading…</div>
+    return <div className="settings-page">
+      <button className="secondary" onClick={onBack}>← Back</button>
+      <PageHeader title="Settings" />
+      <StatePanel kind="loading" title="Loading settings">Getting saved publish targets.</StatePanel>
+    </div>
   }
 
   return (
@@ -105,7 +110,9 @@ export function Settings({ onBack }: Props) {
           {savedAt && <span className="muted">✓ saved</span>}
         </div>
 
-        {error && <div className="error">{error}</div>}
+        {error && <StatePanel kind="error" title="Settings request failed" detail={error}>
+          Check the connection and try again.
+        </StatePanel>}
       </form>
 
       <div className="muted" style={{ marginTop: 24, fontSize: '0.9em' }}>

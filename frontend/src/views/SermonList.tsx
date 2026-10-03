@@ -4,6 +4,7 @@ import type { Sermon } from '../types'
 import { AddSermon } from './AddSermon'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
+import { StatePanel } from '../components/StatePanel'
 
 type Props = {
   admin: boolean
@@ -68,7 +69,7 @@ export function SermonList({ admin, onOpen, onDeleted, onUpload, uploadActive }:
   )
 
   const refresh = useCallback(() => {
-    api.listSermons().then(setSermons).catch((e) => setError(String(e)))
+    api.listSermons().then(data => { setSermons(data); setError(null) }).catch((e) => setError(String(e)))
   }, [])
 
   useEffect(() => {
@@ -96,10 +97,13 @@ export function SermonList({ admin, onOpen, onDeleted, onUpload, uploadActive }:
 
       <AddSermon onAdded={refresh} onUpload={onUpload} uploadActive={uploadActive} />
 
-      {error && <div className="error">Error: {error}</div>}
-      {!sermons && !error && <div className="muted">Loading…</div>}
+      {error && <StatePanel kind="error" title="Sermons could not be refreshed" detail={error}
+        action={<button type="button" className="secondary" onClick={refresh}>Try again</button>}>
+        Check the connection and try again.
+      </StatePanel>}
+      {!sermons && !error && <StatePanel kind="loading" title="Loading sermons">Getting source recordings.</StatePanel>}
       {sermons && sermons.length === 0 && (
-        <div className="empty">No sermons yet — add one above.</div>
+        <StatePanel kind="empty" title="No sermons yet">Add a source recording above to get started.</StatePanel>
       )}
       {sortedSermons && sortedSermons.length > 0 && (
         <>

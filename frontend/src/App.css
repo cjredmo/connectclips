@@ -180,6 +180,17 @@ h3 { font-size: 19px; line-height: 1.35; color: var(--color-primary); }
 .error { color: var(--err); padding: 8px 12px; background: #fff4f2; border: 1px solid #f1c6c1; border-radius: 8px; margin: 8px 0; }
 .error-inline { color: var(--err); margin-left: 8px; }
 .empty { color: var(--muted); padding: 24px; text-align: center; }
+.state-panel { padding: 22px 24px; border: 1px solid var(--color-border);
+  border-radius: 18px; background: var(--color-surface); color: var(--color-text-muted); }
+.state-panel h3 { margin: 0 0 5px; color: var(--color-text); font-size: 17px; }
+.state-panel p { margin: 0; }
+.state-panel-error { border-color: #efcec9; background: #fffafa; }
+.state-panel-error h3 { color: #98291e; }
+.state-panel-loading { background: #fbfaff; }
+.state-panel-action { margin-top: 14px; }
+.state-panel details, .activity-item-failure details, .export-job-error details { margin-top: 10px; font-size: 12px; }
+.state-panel pre, .activity-item-failure pre, .export-job-error pre { max-height: 220px;
+  overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--color-text); }
 
 button {
   background: var(--color-surface);
@@ -1055,41 +1066,51 @@ input[type="text"], input[type="password"], select, textarea {
 .upload-banner progress::-webkit-progress-value { background: var(--accent); border-radius: 5px; transition: width 100ms; }
 .upload-banner progress::-moz-progress-bar { background: var(--accent); border-radius: 5px; }
 
-/* Activity / history view */
+/* Recent processing is grouped by real job state, with detail kept secondary. */
+.history { min-width: 0; }
+.activity-filter-label { display: block; margin-bottom: 6px; color: var(--color-primary);
+  font-size: 13px; font-weight: 700; }
 .history-filter {
-  width: 100%;
-  background: var(--bg);
+  width: min(520px, 100%);
+  background: var(--color-surface);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: 12px;
+  padding: 10px 13px;
   font-size: 14px;
-  margin-bottom: 12px;
+  margin-bottom: 24px;
 }
-.history-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-.history-table th, .history-table td {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-.history-table th {
-  color: var(--muted);
-  font-weight: 500;
-  background: var(--panel);
-  position: sticky;
-  top: 0;
-}
-.history-table tr.row-failed { background: rgba(248,81,73,0.05); }
-.history-table tr.row-running td:nth-child(4) { color: var(--accent); }
-.history-table .small { font-size: 12px; }
+.activity-section { margin: 10px 0 32px; }
+.activity-section-heading, .export-section-heading { display: flex; align-items: baseline;
+  gap: 12px; margin-bottom: 12px; }
+.activity-section-heading h2, .export-section-heading h3 { margin: 0; font-size: 19px; }
+.activity-section-heading span, .export-section-heading span { color: var(--color-text-muted); font-size: 13px; }
+.activity-list { display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; }
+.activity-item { display: flex; justify-content: space-between; align-items: start; gap: 20px;
+  min-width: 0; padding: 18px 20px; border: 1px solid var(--color-border);
+  border-radius: 17px; background: #fff; box-shadow: 0 5px 20px rgb(42 34 70 / 4%); }
+.activity-item-running, .activity-item-queued { border-left: 3px solid var(--color-violet); }
+.activity-item-failed { border-left: 3px solid var(--color-error); }
+.activity-item-main { min-width: 0; flex: 1; }
+.activity-item-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.activity-item-heading h3 { margin: 0; font-size: 16px; }
+.activity-item-source { margin: 5px 0 0; color: #59627a; font-size: 13px; overflow-wrap: anywhere; }
+.activity-item-meta { display: flex; flex-wrap: wrap; gap: 3px 16px; margin: 8px 0 0;
+  color: var(--color-text-muted); font-size: 12px; }
+.activity-item-progress, .export-job-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 4px 10px; max-width: 560px; margin-top: 12px;
+  color: var(--color-primary); font-size: 12px; }
+.activity-item-progress progress, .export-job-progress progress { width: 100%; height: 8px; accent-color: var(--color-violet); }
+.activity-item-progress p, .export-job-progress p { grid-column: 1 / -1; margin: 0;
+  color: var(--color-text-muted); overflow-wrap: anywhere; }
+.activity-item-failure, .export-job-error { margin-top: 11px; color: #98291e;
+  font-size: 13px; overflow-wrap: anywhere; }
+.activity-item-result { display: grid; justify-items: end; gap: 5px;
+  flex: 0 0 auto; font-size: 12px; color: var(--color-text-muted); }
+.activity-item-result a { color: var(--color-violet); font-weight: 750; }
 
-/* Usage page — same table-on-dark-panel structure as History, with a
-   summary card on top showing aggregate token / cost numbers. */
+/* Usage keeps its existing data and actions inside the shared page treatment. */
+.usage { min-width: 0; overflow-x: auto; }
 .usage-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -1099,8 +1120,8 @@ input[type="text"], input[type="password"], select, textarea {
 .usage-stat {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
+  border-radius: 14px;
+  padding: 16px;
 }
 .usage-stat-label {
   color: var(--muted);
@@ -1115,6 +1136,7 @@ input[type="text"], input[type="password"], select, textarea {
 }
 .usage-table {
   width: 100%;
+  min-width: 680px;
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -1256,9 +1278,9 @@ input[type="text"], input[type="password"], select, textarea {
 }
 
 .settings-form {
-  background: var(--panel-2);
+  background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 16px;
   padding: 20px 22px 22px;
   margin: 16px 0 24px;
   display: flex;
@@ -1503,12 +1525,31 @@ button.small { padding: 4px 8px; font-size: 12px; }
 .sermon-transcript-actions .step { flex-wrap: wrap; }
 .sermon-clips-pipeline .step { flex-wrap: wrap; min-width: 0; flex-basis: 100%; }
 .sermon-clips-pipeline .clip-count-controls { flex-wrap: wrap; }
-.sermon-export-list { list-style: none; margin: 20px 0; padding: 0; }
-.sermon-export-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-bottom: 1px solid var(--color-border); padding: 16px 0; }
-.sermon-export-row p { margin: 4px 0 0; }
+.export-section { margin: 24px 0 30px; }
+.export-section-previous { padding-top: 18px; border-top: 1px solid var(--color-border); }
+.export-history-note { margin-top: 24px; }
+.sermon-export-list { display: grid; gap: 12px; list-style: none; margin: 14px 0; padding: 0; }
+.sermon-export-row { display: flex; justify-content: space-between; align-items: center;
+  gap: 24px; min-width: 0; padding: 18px 20px; border: 1px solid var(--color-border);
+  border-radius: 17px; background: var(--color-surface); box-shadow: 0 5px 20px rgb(42 34 70 / 4%); }
+.export-section-previous .sermon-export-row { background: #fcfbff; box-shadow: none; }
+.sermon-export-main { min-width: 0; }
+.sermon-export-title { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.sermon-export-title h4 { margin: 0; font-size: 17px; color: var(--color-text); }
+.sermon-export-meta { display: flex; flex-wrap: wrap; gap: 3px 14px; margin: 8px 0 0;
+  color: var(--color-text-muted); font-size: 12px; }
+.sermon-export-filename { margin: 7px 0 0; color: #9299aa; font-size: 11px; overflow-wrap: anywhere; }
 .sermon-export-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.sermon-download-link { display: inline-flex; align-items: center; min-height: 42px; border-radius: 8px; background: var(--color-primary); color: white; padding: 8px 14px; text-decoration: none; font-size: 14px; font-weight: 600; }
-.sermon-download-link:hover { background: var(--color-primary-hover); }
+.sermon-download-link { display: inline-flex; align-items: center; min-height: 42px;
+  border-radius: 10px; background: var(--color-violet); color: white; padding: 8px 14px;
+  text-decoration: none; font-size: 14px; font-weight: 700; }
+.sermon-download-link:hover { background: var(--color-violet-hover); }
+.export-job-section { margin: 0 0 24px; }
+.export-job-section h3 { margin: 0 0 10px; font-size: 18px; }
+.export-job-row { padding: 15px 18px; border: 1px solid var(--color-border);
+  border-radius: 14px; background: #fff; margin-bottom: 8px; }
+.export-job-row > div:first-child { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.export-job-failed { border-color: #efcec9; }
 
 /* Transcript text owns the wide column; media and copy tools stay nearby. */
 .full-transcript { padding: 0; border: 0; background: transparent; }
@@ -1544,10 +1585,6 @@ button.small { padding: 4px 8px; font-size: 12px; }
   .transcript-document, .transcript-side { padding: 16px; }
   .full-transcript .transcript-segments { max-height: 65vh; }
 }
-
-/* Keep the existing wide Activity table scrollable within the content area. */
-.history { overflow-x: auto; }
-.history-table { min-width: 680px; }
 
 @media (max-width: 1100px) {
   .app-shell { grid-template-columns: 82px minmax(0, 1fr); }
@@ -1591,6 +1628,13 @@ button.small { padding: 4px 8px; font-size: 12px; }
   .app-topbar-search { width: 100%; flex: 1 1 auto; }
   .app { padding: 22px 16px 100px; }
   .page-header { align-items: start; flex-direction: column; gap: 12px; }
+  .activity-item { flex-direction: column; gap: 10px; padding: 16px; }
+  .activity-item-result { justify-items: start; }
+  .sermon-export-row { padding: 16px; }
+  .sermon-export-actions { width: 100%; }
+  .sermon-export-actions .sermon-download-link { justify-content: center; }
+  .settings-form { padding: 18px; }
+  .settings-form input[type="text"] { min-width: 0; width: 100%; }
   .add-sermon { padding: 16px; }
   .add-row .input-row { flex-wrap: wrap; }
   .add-row .input-row input[type="text"] { flex-basis: 100%; }

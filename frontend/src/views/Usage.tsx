@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { UsageResponse } from '../types'
+import { PageHeader } from '../components/PageHeader'
+import { StatePanel } from '../components/StatePanel'
 
 type Props = {
   onBack: () => void
@@ -52,7 +54,7 @@ export function Usage({ onBack }: Props) {
   useEffect(() => {
     let cancelled = false
     api.getUsage()
-      .then((d) => { if (!cancelled) setData(d) })
+      .then((d) => { if (!cancelled) { setData(d); setError(null) } })
       .catch((e) => { if (!cancelled) setError(String(e)) })
     return () => { cancelled = true }
   }, [tick])
@@ -93,11 +95,8 @@ export function Usage({ onBack }: Props) {
 
   return (
     <div className="usage">
-      <div className="header-row">
-        <button className="back" onClick={onBack}>← Back</button>
-        <button className="secondary" onClick={refresh}>Refresh</button>
-      </div>
-      <h1>API Usage</h1>
+      <div className="header-row"><button className="back" onClick={onBack}>← Back</button></div>
+      <PageHeader title="API Usage" actions={<button className="secondary" onClick={refresh}>Refresh</button>} />
       <div className="muted" style={{ marginBottom: 12 }}>
         Anthropic Claude API usage and estimated cost across all clip-selection runs.
         Numbers reflect what ConnectClips spent on this API key — any other
@@ -105,8 +104,11 @@ export function Usage({ onBack }: Props) {
         the model's published rate card.
       </div>
 
-      {error && <div className="error">{error}</div>}
-      {!data && !error && <div className="muted">Loading…</div>}
+      {error && <StatePanel kind="error" title="Usage could not be loaded" detail={error}
+        action={<button className="secondary" onClick={refresh}>Try again</button>}>
+        Check the connection and try again.
+      </StatePanel>}
+      {!data && !error && <StatePanel kind="loading" title="Loading usage">Getting the latest totals.</StatePanel>}
 
       {data && (
         <>
@@ -296,10 +298,10 @@ export function Usage({ onBack }: Props) {
           </div>
 
           {data.rows.length === 0 ? (
-            <div className="empty">
+            <StatePanel kind="empty" title="No clip-selection usage yet">
               No clip-selection runs yet. Once you run "Pick clips" on a sermon,
               its API usage will appear here.
-            </div>
+            </StatePanel>
           ) : (
             <table className="usage-table">
               <thead>

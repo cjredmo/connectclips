@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, fileUrl } from '../api'
+import { api } from '../api'
 import type { Clip, ClipsFile, Job, Sermon, TranscriptStatus } from '../types'
 import { SermonNav } from '../components/SermonNav'
 import { StatusBadge } from '../components/StatusBadge'
@@ -15,6 +15,8 @@ import type { PendingAiSelection } from '../clipSelectionSession'
 import { groupClips } from '../clipProvenance'
 import { ClipGroupGrid } from '../components/ClipGroupGrid'
 import { ClipPreviewModal } from '../components/ClipPreviewModal'
+import { StatePanel } from '../components/StatePanel'
+import { SermonExports } from './SermonExports'
 
 type Props = {
   sermon: Sermon
@@ -69,6 +71,7 @@ function JobProgress({ job }: { job: Job | undefined }) {
 
 export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, onSermonUpdated, onTrim, onDeleted }: Props) {
   const [clips, setClips] = useState<ClipsFile | null>(null)
+  const [clipsError, setClipsError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeJobs, setActiveJobs] = useState<Job[]>([])
   const [transcriptStatus, setTranscriptStatus] = useState<TranscriptStatus | null>(null)
@@ -109,14 +112,15 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
       setClips(null)
       return
     }
-    api.getClips(sermon.name).then(setClips).catch((e) => setError(String(e)))
+    api.getClips(sermon.name).then(data => { setClips(data); setClipsError(null) })
+      .catch((e) => setClipsError(String(e)))
   }, [sermon.name, sermon.clips_selected])
 
   useEffect(() => {
     if (!sermon.clips_selected) return
     let cancelled = false
-    api.getClips(sermon.name).then(data => { if (!cancelled) setClips(data) })
-      .catch(e => { if (!cancelled) setError(String(e)) })
+    api.getClips(sermon.name).then(data => { if (!cancelled) { setClips(data); setClipsError(null) } })
+      .catch(e => { if (!cancelled) setClipsError(String(e)) })
     return () => { cancelled = true }
   }, [sermon.name, sermon.clips_selected])
 
@@ -303,7 +307,9 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
         <SermonNav active={section} onChange={onSectionChange} />
       </header>
 
-      {error && <div className="error">Error: {error}</div>}
+      {error && <StatePanel kind="error" title="Sermon action failed" detail={error}>
+        Review the details and try the action again.
+      </StatePanel>}
 
       {section === 'overview' && <>
         <section className="sermon-overview-intro">
@@ -598,18 +604,9 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
         onClose={() => setPreviewClip(null)} onEdit={() => onTrim(previewClip.clip, previewClip.index)} />}
       </>}
 
-      {section === 'exports' && <section className="sermon-exports">
-        <div className="sermon-section-heading"><div><h2>Exports</h2><p className="muted">Current exported clip files for this sermon.</p></div></div>
-        <p className="muted small">This view reflects current clip records. It is not a complete lifetime export history; recent jobs remain in Activity.</p>
-        {exportedClips.length ? <ul className="sermon-export-list">
-          {exportedClips.map(({ clip, index }) => <li key={clip.id} className="sermon-export-row">
-            <div><strong>{clip.title}</strong><p className="muted small">{fmtSecs(clip.start)} – {fmtSecs(clip.end)}{clip.last_exported_at ? ` · exported ${new Date(clip.last_exported_at).toLocaleString()}` : ''}</p></div>
-            <div className="sermon-export-actions">
-              <a href={fileUrl.clip(clip.output_filename!)} download className="sermon-download-link">Download MP4</a>
-              <button type="button" className="secondary" onClick={() => onTrim(clip, index)}>Edit / Trim</button>
-            </div>
-          </li>)}</ul> : <p className="empty">No current exported clips yet. Open Clips to prepare one.</p>}
-      </section>}
+      {section === 'exports' && <SermonExports clips={clips} jobs={activeJobs}
+        loading={sermon.clips_selected && !clips && !clipsError} error={clipsError}
+        onRetry={refreshClips} onOpenClips={() => onSectionChange('clips')} onTrim={onTrim} />}
     </div>
   )
 }
