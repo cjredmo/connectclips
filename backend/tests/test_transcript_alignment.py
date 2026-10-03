@@ -141,6 +141,27 @@ class AlignmentTests(unittest.TestCase):
         self.assertEqual(result["words"][2]["reason"], "invalid_duration_or_bounds")
         self.assertEqual(result["words"][4]["reason"], "unresolved")
 
+    def test_millisecond_duration_boundary_survives_validation(self):
+        candidate = self.candidate()
+        candidate["words"][0]["aligned_start"] = 0.002
+        candidate["words"][0]["aligned_end"] = 0.022
+        self.assertEqual(transcript_alignment.validation_errors(sample(), candidate), [])
+        transcript_alignment.write(self.path, candidate)
+        self.assertEqual(transcript_alignment.read(self.path)["words"][0]["status"], "aligned")
+
+    def test_merge_rejects_duration_outside_limit_after_rounding(self):
+        effective = {"source": "sample.mp4", "duration": 3.0,
+                     "segments": [{"id": 1, "start": 0.0, "end": 0.4,
+                                   "text": "alpha", "words": [
+                                       {"word": "alpha", "start": 0.0, "end": 0.4}]}]}
+        words = transcript_alignment.flatten(effective)
+        windows = alignment_runner.make_windows(words, [(0, 3)], 3)
+        output = [{"word": "alpha", "start": 0.0045, "end": 2.0045, "score": 0.9}]
+        result = alignment_runner.merge(effective, [(0, 3)], windows,
+                                        {"windows": [{"index": 0, "word_segments": output}]})
+        self.assertEqual(result["words"][-1]["status"], "fallback")
+        self.assertEqual(result["words"][-1]["reason"], "invalid_duration_or_bounds")
+
     def test_overlap_in_candidate_reverts_lower_confidence_word(self):
         effective = sample()
         words = transcript_alignment.flatten(effective)

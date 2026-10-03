@@ -21,6 +21,14 @@ SCHEMA_VERSION = 1
 CONTEXT_SECONDS = 6.0
 MIN_ALIGNED_DURATION = 0.02
 MAX_ALIGNED_DURATION = 2.0
+_DURATION_FLOAT_TOLERANCE = 1e-9
+
+
+def valid_aligned_duration(start: float, end: float) -> bool:
+    """Check duration without rejecting millisecond values for float roundoff."""
+    duration = end - start
+    return (MIN_ALIGNED_DURATION - _DURATION_FLOAT_TOLERANCE <= duration <=
+            MAX_ALIGNED_DURATION + _DURATION_FLOAT_TOLERANCE)
 
 
 class AlignmentError(ValueError):
@@ -87,8 +95,8 @@ def read(transcript_path: Path) -> dict | None:
             if (not isinstance(aligned_start, (int, float)) or
                     not isinstance(aligned_end, (int, float)) or
                     not math.isfinite(aligned_start) or not math.isfinite(aligned_end) or
-                    aligned_start < 0 or not MIN_ALIGNED_DURATION <=
-                    aligned_end - aligned_start <= MAX_ALIGNED_DURATION or
+                    aligned_start < 0 or not valid_aligned_duration(
+                        aligned_start, aligned_end) or
                     (score is not None and (not isinstance(score, (int, float)) or
                                             not math.isfinite(score) or score < 0.10))):
                 raise AlignmentError("alignment sidecar has invalid aligned timings")
@@ -163,7 +171,7 @@ def validation_errors(effective: dict, data: dict, *, full_range: bool = True) -
                 end < start or end > duration + 0.01:
             errors.append("alignment contains invalid display timings")
             break
-        if entry.get("status") == "aligned" and not MIN_ALIGNED_DURATION <= end - start <= MAX_ALIGNED_DURATION:
+        if entry.get("status") == "aligned" and not valid_aligned_duration(start, end):
             errors.append("alignment contains invalid word duration")
             break
         if previous and (start < previous[0] or end < previous[1] or

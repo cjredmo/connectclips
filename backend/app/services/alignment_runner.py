@@ -129,9 +129,11 @@ def merge(effective: dict, ranges: list[tuple[float, float]], windows: list[dict
             checks = [other[word["key"]] for index, other in mapped.items()
                       if index != owner["index"] and word["key"] in other]
             disagreement = max((abs(start - other["start"]) for other in checks), default=0.0)
+            rounded_start, rounded_end = round(start, 3), round(end, 3)
             if not (math.isfinite(start) and math.isfinite(end) and
-                    0.02 <= end - start <= 2.0 and 0 <= start < end <=
-                    float(effective["duration"]) + 0.01):
+                    transcript_alignment.valid_aligned_duration(start, end) and
+                    transcript_alignment.valid_aligned_duration(rounded_start, rounded_end) and
+                    0 <= start < end <= float(effective["duration"]) + 0.01):
                 entry["reason"] = "invalid_duration_or_bounds"
             elif score is not None and (not isinstance(score, (int, float)) or
                                         not math.isfinite(score) or score < MIN_SCORE):
@@ -139,8 +141,8 @@ def merge(effective: dict, ranges: list[tuple[float, float]], windows: list[dict
             elif disagreement > MAX_OVERLAP_DISAGREEMENT:
                 entry["reason"] = "overlap_disagreement"
             else:
-                entry.update(status="aligned", reason=None, aligned_start=round(start, 3),
-                             aligned_end=round(end, 3), score=score,
+                entry.update(status="aligned", reason=None, aligned_start=rounded_start,
+                             aligned_end=rounded_end, score=score,
                              overlap_max_start_shift=round(disagreement, 3))
                 if abs(start - word["start"]) > 1.5:
                     diagnostics.append(f"{word['key']}: large_start_shift")
