@@ -32,12 +32,17 @@ test('recommended action follows existing transcript and clip readiness', () => 
   assert.equal(nextSermonAction(sermon, { ...status, human_review_required: true }, false).section, 'transcript')
   assert.deepEqual(nextSermonAction(sermon, status, false),
     { label: 'Create clips', section: 'clips', action: 'navigate' })
+  assert.equal(nextSermonAction(sermon, { ...status, alignment: undefined }, false).section, 'clips')
   assert.equal(nextSermonAction({ ...sermon, n_clips: 2 }, status, false).label, 'Review clips')
 })
 
 test('accepted effective transcript outweighs old raw-quality failure', () => {
   assert.deepEqual(transcriptPresentation(sermon, status, false),
-    { label: 'Ready', tone: 'success', detail: 'The effective transcript is available for review.' })
+    { label: 'Ready', tone: 'success', detail: 'The effective transcript is ready for clip creation.' })
+  assert.equal(transcriptPresentation(sermon, { ...status, alignment: undefined }, false).label,
+    'Ready')
   assert.equal(transcriptPresentation(sermon, { ...status, human_review_required: true }, false).label,
     'Needs review')
+  assert.equal(transcriptPresentation(sermon, { ...status, human_review_required: true }, false, true).detail,
+    'Repairing the transcript.')
 })

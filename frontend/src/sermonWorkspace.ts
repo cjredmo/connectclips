@@ -23,18 +23,16 @@ export type TranscriptPresentation = {
 }
 
 export function transcriptPresentation(sermon: Sermon, status: TranscriptStatus | null,
-  transcribing: boolean): TranscriptPresentation {
+  transcribing: boolean, repairing = false): TranscriptPresentation {
   if (!sermon.transcribed) return transcribing
     ? { label: 'Processing', tone: 'processing', detail: 'Transcription is running.' }
     : { label: 'Not started', tone: 'neutral', detail: 'Transcribe the source to review its text.' }
   if (!status) return { label: 'Checking', tone: 'processing', detail: 'Checking the effective transcript.' }
-  if (status.human_review_required || status.effective_quality.status === 'failed') {
+  if (repairing) return { label: 'Processing', tone: 'processing', detail: 'Repairing the transcript.' }
+  if (status.human_review_required || !['clean', 'warning'].includes(status.effective_quality.status)) {
     return { label: 'Needs review', tone: 'warning', detail: 'Review the effective transcript before clip selection.' }
   }
-  if (status.alignment?.status === 'aligning') {
-    return { label: 'Processing', tone: 'processing', detail: 'Word alignment is running.' }
-  }
-  return { label: 'Ready', tone: 'success', detail: 'The effective transcript is available for review.' }
+  return { label: 'Ready', tone: 'success', detail: 'The effective transcript is ready for clip creation.' }
 }
 
 export function nextSermonAction(sermon: Sermon, status: TranscriptStatus | null,
@@ -42,7 +40,7 @@ export function nextSermonAction(sermon: Sermon, status: TranscriptStatus | null
   if (!sermon.transcribed) return transcribing
     ? { label: 'View transcript status', section: 'transcript', action: 'navigate' }
     : { label: 'Start transcription', section: 'overview', action: 'transcribe' }
-  if (!status || status.human_review_required || !status.alignment?.acceptable) {
+  if (!status || status.human_review_required || !['clean', 'warning'].includes(status.effective_quality.status)) {
     return { label: 'Review transcript', section: 'transcript', action: 'navigate' }
   }
   return { label: sermon.n_clips > 0 ? 'Review clips' : 'Create clips', section: 'clips', action: 'navigate' }

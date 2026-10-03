@@ -209,6 +209,6 @@ def transcript_status(transcript_path: Path) -> dict:
         "recent_repair_attempts": recent_attempts,
         "repaired_ranges": [{"start": r["replace_start"], "end": r["replace_end"],
                              "backend": r["backend"], "model": r["model"]} for r in repairs],
-        "human_review_required": effective_quality["status"] == "failed" or bool(warnings),
+        "human_review_required": effective_quality["status"] in {"failed", "unchecked"} or bool(warnings),
         "warnings": warnings,
     }

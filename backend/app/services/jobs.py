@@ -182,7 +182,7 @@ def create_transcribe_job(source_name: str, *, user_login: str | None = None, us
     return job
 
 
-def create_repair_job(source_name: str, *, auto_chain: bool = False,
+def create_repair_job(source_name: str, *,
                       user_login: str | None = None, user_name: str | None = None) -> Job:
     if source_name in ("", ".", "..") or "/" in source_name or "\\" in source_name:
         raise ValueError("invalid source name")
@@ -199,7 +199,7 @@ def create_repair_job(source_name: str, *, auto_chain: bool = False,
         raise ValueError("transcript repair is already running")
     job = _new_job(kind="repair_transcript", source=source_name,
                    user_login=user_login, user_name=user_name)
-    asyncio.create_task(_run_repair(job, src, path, auto_chain))
+    asyncio.create_task(_run_repair(job, src, path))
     return job
 
 
@@ -299,10 +299,8 @@ def create_select_clips_job(
 
 def _ensure_transcript_selectable(transcript_path: Path) -> None:
     status = transcript_repairs.transcript_status(transcript_path)
-    if status["effective_quality"]["status"] == "failed" or status["human_review_required"]:
+    if status["effective_quality"]["status"] not in {"clean", "warning"} or status["human_review_required"]:
         raise ValueError("transcript quality requires repair or human review before clip selection")
-    if not transcript_alignment.status(transcript_path)["acceptable"]:
-        raise ValueError("word alignment must complete before clip selection")
 
 
 def create_export_clip_job(
@@ -411,31 +409,34 @@ async def _run_transcribe(job: Job, src: Path) -> None:
             transcript = await asyncio.to_thread(transcribe.transcribe_file, src, progress_cb)
             out = await asyncio.to_thread(transcribe.write_transcript, transcript)
             job.transcript_path = str(out)
+            job.progress_message = "Checking transcript"
+            _save(job)
+            status = await asyncio.to_thread(transcript_repairs.transcript_status, out)
+            needs_repair = (status["raw_quality"]["status"] == "failed" and
+                            status["effective_quality"]["status"] == "failed")
             job.progress_percent = 1.0
-            job.progress_message = "Done"
+            job.progress_message = ("Repairing transcript" if needs_repair else
+                                    "Transcript needs review" if status["human_review_required"] or
+                                    status["effective_quality"]["status"] == "unchecked" else
+                                    "Transcript ready")
             _save(job)
             _finish(job)
         except Exception as exc:
             _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
             return
-    # Auto-chain repair and alignment outside the GPU lock. Face prescan can
-    # run in parallel because it does not need the transcription lock.
+    # Only failed QC can chain a bounded repair. Face prescan stays independent.
     if job.source:
-        try:
-            status = transcript_repairs.transcript_status(transcribe.transcript_path_for(job.source))
-            if status["raw_quality"]["status"] == "failed":
-                create_repair_job(job.source, auto_chain=True,
-                                  user_login=job.user_login, user_name=job.user_name)
-            else:
-                _maybe_chain_alignment(job.source, user_login=job.user_login,
-                                       user_name=job.user_name)
-        except Exception:
-            # Raw stays available for review; explicit selection checks quality.
-            pass
+        if needs_repair:
+            try:
+                create_repair_job(job.source, user_login=job.user_login,
+                                  user_name=job.user_name)
+            except Exception as exc:
+                job.progress_message = "Transcript needs review"
+                _finish(job, f"Automatic transcript repair could not start: {type(exc).__name__}: {exc}")
         _maybe_chain_prescan(job.source, user_login=job.user_login, user_name=job.user_name)
 
 
-async def _run_repair(job: Job, src: Path, transcript_path: Path, auto_chain: bool) -> None:
+async def _run_repair(job: Job, src: Path, transcript_path: Path) -> None:
     async with _gpu_lock:
         await _start(job)
 
@@ -449,18 +450,16 @@ async def _run_repair(job: Job, src: Path, transcript_path: Path, auto_chain: bo
                 transcript_repair_runner.repair_transcript, src, transcript_path, progress_cb,
             )
             if status["human_review_required"]:
+                job.progress_message = "Transcript needs review"
                 _finish(job, "Transcript repair requires human review")
                 return
             job.progress_percent = 1.0
-            job.progress_message = "Done"
+            job.progress_message = "Transcript ready"
             _save(job)
             _finish(job)
         except Exception as exc:
             _finish(job, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
             return
-    if auto_chain and job.source:
-        _maybe_chain_alignment(job.source, user_login=job.user_login,
-                               user_name=job.user_name)
 
 
 async def _run_alignment(job: Job, src: Path, transcript_path: Path) -> None:
@@ -586,22 +585,6 @@ def _maybe_chain_transcribe(source_name: str, *, user_login: str | None = None, 
         create_transcribe_job(source_name, user_login=user_login, user_name=user_name)
     except Exception:
         # Auto-chain is best-effort — never fail the parent job because the next stage couldn't start.
-        pass
-
-
-def _maybe_chain_alignment(source_name: str, *, user_login: str | None = None,
-                           user_name: str | None = None) -> None:
-    path = transcribe.transcript_path_for(source_name)
-    if not path.is_file():
-        return
-    if transcript_alignment.status(path)["acceptable"]:
-        return
-    if not settings.alignment_python:
-        return
-    try:
-        create_alignment_job(source_name,
-                             user_login=user_login, user_name=user_name)
-    except (ValueError, FileNotFoundError):
         pass
 
 

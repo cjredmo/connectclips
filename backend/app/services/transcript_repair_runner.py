@@ -28,13 +28,25 @@ ProgressCB = Callable[[str, float], None]
 def choose_span(raw: dict, finding: dict) -> tuple[float, float]:
     """Splice at intact neighboring segment boundaries, not a guessed word cut."""
     segments = raw.get("segments", [])
+    if finding["reason"] == "transcript_coverage_gap":
+        # Include the final clean segment in the owned range so the missing
+        # tail reconnects to speech, not just an unanchored silence boundary.
+        if not segments:
+            raise transcript_repairs.RepairError("coverage finding has no anchor")
+        start = float(segments[max(0, len(segments) - 2)]["start"])
+        end = float(raw["duration"])
+        if end <= start:
+            raise transcript_repairs.RepairError("invalid splice boundaries")
+        return start, end
     first = next((i for i, s in enumerate(segments)
                   if s["start"] >= finding["start_time"] - 0.01), None)
     last = next((i for i in range(len(segments) - 1, -1, -1)
                  if segments[i]["end"] <= finding["end_time"] + 0.01), None)
     if first is None or last is None or last < first:
         raise transcript_repairs.RepairError("quality finding does not map to source segments")
-    start = float(segments[first - 1]["end"]) if first else 0.0
+    # Own one clean neighboring segment when available; each decode also gets
+    # five seconds of acoustic context outside its owned window.
+    start = float(segments[max(0, first - 2)]["end"]) if first else 0.0
     end = float(segments[last + 1]["start"]) if last + 1 < len(segments) else float(raw["duration"])
     if end <= start:
         raise transcript_repairs.RepairError("invalid splice boundaries")
@@ -358,8 +370,10 @@ def repair_transcript(source: Path, transcript_path: Path,
     """Attempt supported failed spans; never overwrite raw or a valid repair."""
     raw = json.loads(transcript_path.read_text(encoding="utf-8"))
     raw_quality = analyze_transcript(raw)
+    supported = {"repeated_phrase_loop", "repeated_ngram_loop",
+                 "vocabulary_collapse", "transcript_coverage_gap"}
     findings = [f for f in raw_quality["findings"] if
-                f["severity"] == "failed" and f["reason"] == "repeated_phrase_loop"]
+                f["severity"] == "failed" and f["reason"] in supported]
     if not findings:
         return transcript_repairs.transcript_status(transcript_path)
     try:

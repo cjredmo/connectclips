@@ -259,9 +259,10 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
   }
   const onRepair = () => api.startRepairTranscript(sermon.name).catch((e) => setError(String(e)))
   const onAlign = () => api.startAlignTranscript(sermon.name).catch((e) => setError(String(e)))
-  const transcriptBlocked = transcriptStatus?.human_review_required ?? false
-  const alignmentBlocked = !transcriptStatus?.alignment?.acceptable
-  const transcriptState = transcriptPresentation(sermon, transcriptStatus, runningKinds.has('transcribe'))
+  const transcriptBlocked = !transcriptStatus || transcriptStatus.human_review_required ||
+    !['clean', 'warning'].includes(transcriptStatus.effective_quality.status)
+  const transcriptState = transcriptPresentation(sermon, transcriptStatus,
+    runningKinds.has('transcribe'), runningKinds.has('repair_transcript'))
   const nextAction = nextSermonAction({ ...sermon, n_clips: clips?.clips.length ?? sermon.n_clips },
     transcriptStatus, runningKinds.has('transcribe'))
   const nextActionDetail = nextAction.section === 'clips'
@@ -440,7 +441,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
         )}
         {sermon.transcribed && transcriptStatus && (
           <div className="step">
-            <div className="step-title">Word alignment</div>
+            <div className="step-title">Whole-sermon word alignment (optional)</div>
             <span className="muted small">
               {runningKinds.has('align_transcript') ? 'aligning' : transcriptStatus.alignment?.status ?? 'not aligned'}
               {transcriptStatus.alignment && ` · ${transcriptStatus.alignment.aligned_words}/${transcriptStatus.alignment.total_words} words`}
@@ -494,7 +495,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
               <button
                 className="secondary"
                 onClick={onSelectClips}
-                disabled={runningKinds.has('select_clips') || transcriptBlocked || alignmentBlocked}
+                disabled={runningKinds.has('select_clips') || transcriptBlocked}
                 title="Re-run Claude clip selection with the range above"
               >
                 {runningKinds.has('select_clips') ? 'Re-running…' : 'Re-run'}
@@ -505,7 +506,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
             <>
               <button
                 onClick={onSelectClips}
-                disabled={!sermon.transcribed || runningKinds.has('select_clips') || transcriptBlocked || alignmentBlocked}
+                disabled={!sermon.transcribed || runningKinds.has('select_clips') || transcriptBlocked}
               >
                 {runningKinds.has('select_clips') ? 'Running…' : 'Run clip selection'}
               </button>
@@ -528,7 +529,8 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
             Import JSON
           </button>}
           {admin && sermon.transcribed && <button type="button"
-            onClick={() => setPromptOpen(open => !open)}>
+            onClick={() => setPromptOpen(open => !open)} disabled={transcriptBlocked}
+            title={transcriptBlocked ? 'Review the transcript before AI clip selection' : undefined}>
             {promptOpen ? 'Close AI Chat' : pendingSelection ? 'AI Chat · Pending results' : 'AI Chat · Prompt Library'}
           </button>}
         </div>
@@ -540,7 +542,7 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
         )}
       </section>
 
-      {admin && sermon.transcribed && promptOpen && <PromptLibrary source={sermon.name}
+      {admin && sermon.transcribed && !transcriptBlocked && promptOpen && <PromptLibrary source={sermon.name}
         pending={pendingSelection} onPendingChange={setPendingSelection}
         onImportResults={() => { setImportMode('ai_chat'); setImportPreview(null)
           setImportError(null); setImportMessage(null); setImportOpen(true) }} />}

@@ -5,7 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import transcript_alignment, transcript_edits, transcript_repairs, transcript_repair_runner
 from app.services.transcript_quality import analyze_transcript
@@ -80,6 +81,26 @@ class RepairTests(unittest.TestCase):
         from app.services.clip_selection import _segment_view
         self.assertIn("unique3", _segment_view(effective))
         self.assertNotIn("Synthetic echo repeats.", _segment_view(effective))
+
+    def test_explicit_selection_receives_repaired_effective_text_without_alignment(self):
+        from app.services import clip_selection, jobs
+        self.activate()
+        self.assertEqual(transcript_alignment.status(self.path)["status"], "not_aligned")
+        jobs._ensure_transcript_selectable(self.path)
+        client = MagicMock()
+        client.messages.parse.return_value = SimpleNamespace(
+            parsed_output=clip_selection.ClipSelection(clips=[]), model="synthetic",
+            usage=SimpleNamespace(input_tokens=0, output_tokens=0,
+                                  cache_creation_input_tokens=0,
+                                  cache_read_input_tokens=0),
+        )
+        with patch.object(clip_selection, "_get_client", return_value=client):
+            result = clip_selection.select_clips(self.path)
+        prompt = client.messages.parse.call_args.kwargs["messages"][0]["content"][0]["text"]
+        self.assertIn("unique3", prompt)
+        self.assertNotIn("Synthetic echo repeats.", prompt)
+        self.assertEqual(result["clips"], [])
+        self.assertEqual(self.path.read_bytes(), self.original_bytes)
 
     def test_transcript_and_caption_apis_read_repaired_text(self):
         from app.routers import sermons
@@ -393,8 +414,7 @@ class RepairTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             jobs._ensure_transcript_selectable(self.path)
         self.activate()
-        with self.assertRaises(ValueError):
-            jobs._ensure_transcript_selectable(self.path)
+        jobs._ensure_transcript_selectable(self.path)
         effective, _, _ = transcript_edits.load_effective_transcript(self.path)
         words = [{**word, "status": "aligned", "aligned_start": word["start"],
                   "aligned_end": word["end"]} for word in transcript_alignment.flatten(effective)]
@@ -405,7 +425,7 @@ class RepairTests(unittest.TestCase):
 
 
 class RepairWorkflowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_failed_new_transcript_queues_repair_before_alignment(self):
+    async def test_failed_new_transcript_queues_repair_without_alignment(self):
         from app.services import jobs
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "sample.mp4"
@@ -419,11 +439,11 @@ class RepairWorkflowTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(jobs.transcribe, "write_transcript", return_value=path), \
                  patch.object(jobs.transcribe, "transcript_path_for", return_value=path), \
                  patch.object(jobs, "create_repair_job") as repair, \
-                 patch.object(jobs, "_maybe_chain_alignment") as align, \
+                 patch.object(jobs, "create_alignment_job") as align, \
                  patch.object(jobs, "_maybe_chain_prescan"):
                 await jobs._run_transcribe(job, source)
             repair.assert_called_once()
-            self.assertTrue(repair.call_args.kwargs["auto_chain"])
+            self.assertNotIn("auto_chain", repair.call_args.kwargs)
             align.assert_not_called()
 
     async def test_clean_new_transcript_skips_repair(self):
@@ -442,12 +462,64 @@ class RepairWorkflowTests(unittest.IsolatedAsyncioTestCase):
                  patch.object(jobs.transcribe, "write_transcript", return_value=path), \
                  patch.object(jobs.transcribe, "transcript_path_for", return_value=path), \
                  patch.object(jobs, "create_repair_job") as repair, \
-                 patch.object(jobs, "_maybe_chain_alignment") as align, \
+                 patch.object(jobs, "create_alignment_job") as align, \
                  patch.object(jobs, "_maybe_chain_prescan"):
                 await jobs._run_transcribe(job, source)
             repair.assert_not_called()
-            align.assert_called_once()
+            align.assert_not_called()
 
+
+class PhaseSixFixtureTests(unittest.TestCase):
+    def test_synthetic_tail_recovery_and_failed_recovery(self):
+        from app.services import jobs
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "sample.mp4"
+            source.touch()
+            healthy = [segment(i, 2 * i, 2 * i + 2, f"Distinct opening idea {i}.")
+                       for i in range(5)]
+            tail = [segment(i + 5, 10 + 2 * i, 12 + 2 * i,
+                            "Synthetic echo repeats.") for i in range(100)]
+            raw = {"source": "sample.mp4", "duration": 210,
+                   "segments": healthy + tail}
+            self.assertEqual(analyze_transcript({"segments": healthy})["status"], "clean")
+            report = analyze_transcript(raw)
+            self.assertEqual(report["status"], "failed")
+            self.assertGreaterEqual(report["findings"][0]["start_time"], 10)
+            start, end = transcript_repair_runner.choose_span(raw, report["findings"][0])
+            self.assertLess(start, report["findings"][0]["start_time"])
+            self.assertEqual(end, 210)
+
+            def run_case(name, text_for_index):
+                path = Path(temp_dir) / name / "transcript.json"
+                path.parent.mkdir()
+                path.write_text(json.dumps(raw), encoding="utf-8")
+                original = path.read_bytes()
+                words = [{"word": text_for_index(i), "start": float(i),
+                          "end": i + 0.8} for i in range(int(start), int(end))]
+                with patch.object(transcript_repair_runner.settings,
+                                  "transcript_repair_model", "small.en"), \
+                     patch.object(transcript_repair_runner, "_fallback_available",
+                                  return_value=(True, "cached")), \
+                     patch.object(transcript_repair_runner, "transcribe_span",
+                                  return_value=(words, {"window_word_counts": [len(words)],
+                                                        "boundary_duplicates_removed": 0})) as decode:
+                    status = transcript_repair_runner.repair_transcript(source, path)
+                self.assertEqual(decode.call_count, 1)
+                self.assertEqual(path.read_bytes(), original)
+                return path, status
+
+            good_path, good = run_case("good", lambda i: f"distinct{i}")
+            self.assertEqual(good["effective_quality"]["status"], "clean")
+            self.assertFalse(good["human_review_required"])
+            self.assertTrue(good["repair_exists"])
+            self.assertEqual(transcript_alignment.status(good_path)["status"], "not_aligned")
+            jobs._ensure_transcript_selectable(good_path)
+            bad_path, bad = run_case("bad", lambda i: "echo" if i % 2 else "again")
+            self.assertEqual(bad["effective_quality"]["status"], "failed")
+            self.assertTrue(bad["human_review_required"])
+            self.assertFalse(bad["repair_exists"])
+            with self.assertRaisesRegex(ValueError, "quality"):
+                jobs._ensure_transcript_selectable(bad_path)
 
 if __name__ == "__main__":
     unittest.main()

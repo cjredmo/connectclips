@@ -147,6 +147,34 @@ class QualityTests(unittest.TestCase):
         report = transcript_quality.analyze_transcript(self.make_transcript(phrases))
         self.assertEqual(report["status"], "failed")
 
+    def test_repeated_fragment_across_changing_segment_boundaries(self):
+        phrase = "alpha beta gamma delta epsilon zeta".split()
+        tokens = phrase * 20
+        transcript = self.make_transcript([
+            " ".join(tokens[i:i + 5]) for i in range(0, len(tokens), 5)
+        ])
+        report = transcript_quality.analyze_transcript(transcript)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["findings"][0]["reason"], "repeated_ngram_loop")
+
+    def test_sustained_imperfect_vocabulary_collapse_and_short_refrain(self):
+        collapsed = self.make_transcript([
+            f"echo echo echo again again variant{i % 5}." for i in range(60)
+        ])
+        report = transcript_quality.analyze_transcript(collapsed)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["findings"][0]["reason"], "vocabulary_collapse")
+        short = self.make_transcript(["Amen again."] * 5 +
+                                     [f"New thought {i}." for i in range(15)])
+        self.assertEqual(transcript_quality.analyze_transcript(short)["status"], "clean")
+
+    def test_large_uncovered_tail_requires_review(self):
+        transcript = self.make_transcript([f"Distinct phrase number {i}." for i in range(25)])
+        transcript["duration"] = 400
+        report = transcript_quality.analyze_transcript(transcript)
+        self.assertEqual(report["status"], "failed")
+        self.assertEqual(report["findings"][0]["reason"], "transcript_coverage_gap")
+
 
 if __name__ == "__main__":
     unittest.main()
