@@ -7,13 +7,14 @@ import { nextSermonAction, transcriptPresentation } from '../sermonWorkspace'
 import type { SermonSection } from '../sermonWorkspace'
 import { TranscriptEditor } from './TranscriptEditor'
 import { manualClipDuration, parseManualClipTime, submitManualClipInputs } from '../manualClipTime'
-import { clipDetailSections, importResultMessage, parseClipImportText } from '../clipImport'
+import { importResultMessage, parseClipImportText } from '../clipImport'
 import type { ImportPreview } from '../clipImport'
 import { PromptLibrary } from './PromptLibrary'
 import { loadPendingSelection, submitSelectionImport } from '../clipSelectionSession'
 import type { PendingAiSelection } from '../clipSelectionSession'
-import { groupClips, selectionLabel } from '../clipProvenance'
-import { hookScoreStyle } from '../hookScore'
+import { groupClips } from '../clipProvenance'
+import { ClipGroupGrid } from '../components/ClipGroupGrid'
+import { ClipPreviewModal } from '../components/ClipPreviewModal'
 
 type Props = {
   sermon: Sermon
@@ -30,23 +31,6 @@ function fmtSecs(s: number): string {
   const m = Math.floor(s / 60)
   const sec = (s % 60).toFixed(1)
   return `${m}:${sec.padStart(4, '0')}`
-}
-
-function fmtRelTime(iso: string | null): string {
-  if (!iso) return ''
-  const dt = new Date(iso).getTime()
-  const ms = Date.now() - dt
-  if (ms < 60_000) return 'just now'
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`
-  return `${Math.floor(ms / 86_400_000)}d ago`
-}
-
-function selectionRunLabel(selectedAt: string | null, batchId: string | null, runNumber: number): string {
-  if (selectedAt && Number.isFinite(Date.parse(selectedAt))) {
-    return `Selected ${new Date(selectedAt).toLocaleString()}`
-  }
-  return batchId ? `Selection run ${runNumber}` : 'Run not recorded'
 }
 
 function jobLabel(j: Job): string {
@@ -114,6 +98,10 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
   const [programVideoId, setProgramVideoId] = useState<string | null>(null)
   const [urlError, setUrlError] = useState<string | null>(null)
   const [urlSaving, setUrlSaving] = useState(false)
+  const [sermonDate, setSermonDate] = useState(sermon.sermon_date ?? '')
+  const [dateSaving, setDateSaving] = useState(false)
+  const [dateError, setDateError] = useState<string | null>(null)
+  const [previewClip, setPreviewClip] = useState<{ clip: Clip; index: number } | null>(null)
   const seenCompletedJobs = useRef(new Set<string>())
 
   const refreshClips = useCallback(() => {
@@ -125,18 +113,21 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
   }, [sermon.name, sermon.clips_selected])
 
   useEffect(() => {
-    refreshClips()
-  }, [refreshClips])
+    if (!sermon.clips_selected) return
+    let cancelled = false
+    api.getClips(sermon.name).then(data => { if (!cancelled) setClips(data) })
+      .catch(e => { if (!cancelled) setError(String(e)) })
+    return () => { cancelled = true }
+  }, [sermon.name, sermon.clips_selected])
 
-  // Load the per-sermon meta once. The URL is read here for both admin
-  // (to populate the edit field) and non-admin (so we can display the
-  // current setting read-only or hide it if unset).
+  // Load the per-sermon metadata for the admin fields and read-only display.
   useEffect(() => {
     let cancelled = false
     api.getSermonMeta(sermon.name).then((m) => {
       if (cancelled) return
       setProgramUrl(m.program_video_url ?? '')
       setProgramVideoId(m.program_video_id ?? null)
+      setSermonDate(m.sermon_date ?? '')
     }).catch(() => {})
     return () => { cancelled = true }
   }, [sermon.name])
@@ -165,6 +156,17 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
     } finally {
       setUrlSaving(false)
     }
+  }
+
+  const saveSermonDate = async (raw: string) => {
+    setDateSaving(true)
+    setDateError(null)
+    try {
+      const m = await api.saveSermonMeta(sermon.name, { sermon_date: raw || null })
+      setSermonDate(m.sermon_date ?? '')
+      await onSermonUpdated(sermon.name)
+    } catch (err) { setDateError(String(err)) }
+    finally { setDateSaving(false) }
   }
 
   // Poll relevant jobs every 2s while any are active for this sermon
@@ -374,6 +376,15 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
           )}
         </section>
       )}
+      {(admin || sermonDate) && <section className="program-url-row">
+        <label className="muted small" htmlFor="sermon-date-input">Sermon date</label>
+        {admin ? <>
+          <input id="sermon-date-input" type="date" value={sermonDate} disabled={dateSaving}
+            onChange={event => setSermonDate(event.target.value)}
+            onBlur={event => void saveSermonDate(event.target.value)} />
+          {dateError && <span className="error-inline">{dateError}</span>}
+        </> : <span>{sermonDate}</span>}
+      </section>}
       </>}
 
       {section === 'overview' && <>
@@ -570,76 +581,21 @@ export function SermonDetail({ sermon, section, admin, onBack, onSectionChange, 
       </section>}
       {importMessage && <p role="status" className="badge ok">{importMessage}</p>}
 
-      {clips && (
-        <section className="clips">
-          <h2>Clip suggestions</h2>
-          {clipGroups.length === 0 && <p className="muted">No clips yet.</p>}
-          {clipGroups.map(group => <section className="clip-group" key={group.key}>
-            <div className="clip-group-heading">
-              <h3>{group.label}</h3>
-              <span className="muted small">
-                {group.count} {group.count === 1 ? 'clip' : 'clips'}
-              </span>
-            </div>
-            {group.batches.map((batch, batchIndex) => <div className="clip-batch" key={batch.key}>
-              {(group.batches.length > 1 || batch.selectedAt) &&
-                <p className="clip-batch-label muted small">
-                  {selectionRunLabel(batch.selectedAt, batch.batchId, batchIndex + 1)}
-                  {' · '}{batch.clips.length} clip{batch.clips.length === 1 ? '' : 's'}
-                </p>}
-              <ul>{batch.clips.map(({ clip, index: i }) => {
-              const exportJobs = activeJobs.filter(
-                (j) => j.kind === 'export_clip' && j.clip_index === i,
-              )
-              const latest = exportJobs.sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
-              const exporting = latest && (latest.status === 'queued' || latest.status === 'running')
-              const score = clip.score ?? clip.hook_score
-              return (
-                <li key={`${clip.id}-${i}`} className="clip-card">
-                  <div className="clip-title">
-                    {score !== undefined && (
-                      <span
-                        className="hook-score"
-                        style={hookScoreStyle(score)}
-                        title="Hook score: how likely a cold scroller keeps watching past 3s"
-                      >
-                        {score}
-                      </span>
-                    )}
-                    {clip.title}
-                  </div>
-                  <div className="clip-meta">
-                    {fmtSecs(clip.start)} – {fmtSecs(clip.end)} · {(clip.end - clip.start).toFixed(1)}s
-                    <span className="badge">{selectionLabel(clip)}</span>
-                    {clip.exported && <span className="badge ok"> ✓ exported</span>}
-                    {exporting && <span className="badge"> exporting…</span>}
-                    {latest?.status === 'failed' && (
-                      <span className="error-inline"> {(latest.error ?? '').split('\n')[0]}</span>
-                    )}
-                    {clip.exported && clip.last_exported_by_name && (
-                      <span className="muted clip-attribution">
-                        {' '}by <strong>{clip.last_exported_by_name}</strong>
-                        {clip.last_exported_at && <> · {fmtRelTime(clip.last_exported_at)}</>}
-                      </span>
-                    )}
-                  </div>
-                  {clip.scripture_reference &&
-                    <div className="clip-rationale">Scripture: {clip.scripture_reference}</div>}
-                  {exporting && <JobProgress job={latest} />}
-                  {clipDetailSections(clip).map(([label, value]) =>
-                    <div key={label} className="clip-rationale"><strong>{label}:</strong> {value}</div>)}
-                  <div className="clip-actions">
-                    <button onClick={() => onTrim(clip, i)}>
-                      {clip.exported ? 'Re-trim & export' : 'Preview / trim / export'}
-                    </button>
-                  </div>
-                </li>
-              )
-            })}</ul>
-            </div>)}
-          </section>)}
-        </section>
-      )}
+      {clips && <section className="clips media-clips-workspace">
+        <h2>Clip suggestions</h2>
+        {clipGroups.length === 0 && <p className="muted">No clips yet.</p>}
+        {clipGroups.map(group => <ClipGroupGrid key={group.key} sermon={sermon} group={group}
+          onPreview={(clip, index) => setPreviewClip({ clip, index })}
+          onEdit={onTrim}
+          statusFor={index => {
+            const latest = activeJobs.filter(job => job.kind === 'export_clip' && job.clip_index === index)
+              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+            return latest?.status === 'queued' || latest?.status === 'running' ? 'Exporting…'
+              : latest?.status === 'failed' ? 'Export failed' : undefined
+          }} />)}
+      </section>}
+      {previewClip && <ClipPreviewModal sermon={sermon} clip={previewClip.clip}
+        onClose={() => setPreviewClip(null)} onEdit={() => onTrim(previewClip.clip, previewClip.index)} />}
       </>}
 
       {section === 'exports' && <section className="sermon-exports">

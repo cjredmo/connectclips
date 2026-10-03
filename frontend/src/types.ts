@@ -2,6 +2,7 @@ export type Sermon = {
   name: string
   size_bytes: number
   modified_at: string
+  sermon_date?: string | null
   transcribed: boolean
   clips_selected: boolean
   n_clips: number

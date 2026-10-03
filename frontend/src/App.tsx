@@ -2,34 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api'
 import { SermonList } from './views/SermonList'
 import { SermonDetail } from './views/SermonDetail'
+import { ClipsLibrary } from './views/ClipsLibrary'
 import { Trim } from './views/Trim'
 import { AppShell } from './components/AppShell'
 import { History } from './views/History'
 import { Settings } from './views/Settings'
 import { Usage } from './views/Usage'
-import type { Clip, Me, Sermon } from './types'
-import { parseSermonSectionPath, sermonSectionPath } from './sermonWorkspace'
-import type { SermonSection } from './sermonWorkspace'
+import type { Me, Sermon } from './types'
+import { buildPath, parsePath, routeMatchesView } from './appRoutes'
+import type { Route, View } from './appRoutes'
 import { afterClipSave, clipEditorKey } from './clipNavigation'
+import { shellContext, shellDestination } from './shellNavigation'
 import './App.css'
-
-type View =
-  | { name: 'list' }
-  | { name: 'detail'; sermon: Sermon; section: SermonSection }
-  | { name: 'trim'; sermon: Sermon; clip: Clip; clipIndex: number; clipCount: number }
-  | { name: 'history' }
-  | { name: 'usage' }
-  | { name: 'settings' }
-
-// Parsed-from-URL form. Doesn't carry the full sermon/clip object — those
-// come from the API on hydration.
-type Route =
-  | { name: 'list' }
-  | { name: 'detail'; sermonName: string; section: SermonSection }
-  | { name: 'trim'; sermonName: string; clipIndex: number }
-  | { name: 'history' }
-  | { name: 'usage' }
-  | { name: 'settings' }
 
 type Upload = {
   id: string  // client-side; lets the banner key by uploads even if the file
@@ -44,60 +28,12 @@ type Upload = {
 
 const ANON: Me = { login: null, name: null, profile_pic: null, admin: false, anonymous: true }
 
-// History-API routing. The backend serves index.html for any path that
-// isn't under /api or /files (SPAStaticFiles falls back on 404), so deep
-// links survive a refresh and the URL bar shows clean paths instead of
-// `#/sermons/...`. Back/forward buttons fire `popstate`, which we listen
-// to for cross-history hydration.
-function buildPath(view: View): string {
-  switch (view.name) {
-    case 'list':     return '/'
-    case 'history':  return '/history'
-    case 'usage':    return '/usage'
-    case 'settings': return '/settings'
-    case 'detail':   return sermonSectionPath(view.sermon.name, view.section)
-    case 'trim':     return `/sermons/${encodeURIComponent(view.sermon.name)}/clip/${view.clipIndex}`
-  }
-}
-
-function parsePath(pathname: string): Route {
-  if (pathname === '' || pathname === '/') return { name: 'list' }
-  if (pathname === '/history') return { name: 'history' }
-  if (pathname === '/usage') return { name: 'usage' }
-  if (pathname === '/settings') return { name: 'settings' }
-  const trim = pathname.match(/^\/sermons\/([^/]+)\/clip\/(\d+)\/?$/)
-  if (trim) {
-    return { name: 'trim', sermonName: decodeURIComponent(trim[1]), clipIndex: parseInt(trim[2], 10) }
-  }
-  const detail = parseSermonSectionPath(pathname)
-  if (detail) {
-    return { name: 'detail', sermonName: detail.name, section: detail.section }
-  }
-  return { name: 'list' }
-}
-
-// True iff the route encoded in the URL matches the view we're rendering.
-// We compare so that programmatic `navigate()` (which also updates the hash)
-// doesn't trigger a redundant re-hydrate via the hashchange listener.
-function routeMatchesView(route: Route, view: View): boolean {
-  if (route.name === 'list' && view.name === 'list') return true
-  if (route.name === 'history' && view.name === 'history') return true
-  if (route.name === 'usage' && view.name === 'usage') return true
-  if (route.name === 'settings' && view.name === 'settings') return true
-  if (route.name === 'detail' && view.name === 'detail') {
-    return route.sermonName === view.sermon.name && route.section === view.section
-  }
-  if (route.name === 'trim' && view.name === 'trim') {
-    return route.sermonName === view.sermon.name && route.clipIndex === view.clipIndex
-  }
-  return false
-}
-
 function App() {
   const [view, setView] = useState<View>({ name: 'list' })
   const [me, setMe] = useState<Me>(ANON)
   const [listVersion, setListVersion] = useState(0)
   const [uploads, setUploads] = useState<Upload[]>([])
+  const [clipSearch, setClipSearch] = useState('')
   // Set true while we're resolving a non-default URL into a View — we
   // need to fetch the sermon (and clip, for trim) from the API before we
   // can render. Without this the user sees a flash of the sermon list
@@ -129,6 +65,7 @@ function App() {
   // of range, network error) falls back to the closest valid view.
   const hydrateRoute = useCallback(async (route: Route): Promise<View> => {
     if (route.name === 'list')     return { name: 'list' }
+    if (route.name === 'clips')    return { name: 'clips' }
     if (route.name === 'history')  return { name: 'history' }
     if (route.name === 'usage')    return { name: 'usage' }
     if (route.name === 'settings') return { name: 'settings' }
@@ -337,12 +274,15 @@ function App() {
 
   return (
     <AppShell
-      active={view.name === 'history' ? 'activity' : view.name === 'usage' || view.name === 'settings' ? view.name : 'sermons'}
+      active={shellDestination(view)}
+      context={shellContext(view)}
+      clipSearch={clipSearch}
+      onClipSearchChange={setClipSearch}
       me={me}
       onNavigate={(destination) => navigate({ name: destination === 'sermons' ? 'list' : destination === 'activity' ? 'history' : destination })}
       onAdminChange={refreshMe}
     >
-    <div className={`app${view.name === 'trim' ? ' app-wide' : ''}`}>
+    <div className={`app${view.name === 'trim' ? ' app-wide' : ''}${view.name === 'clips' ? ' app-library' : ''}`}>
 
       {/* App-global upload banners — one row per active/recent upload, persists across view navigation */}
       {uploads.map((u) => (
@@ -391,6 +331,15 @@ function App() {
                 uploadActive={uploads.some((u) => u.status === 'uploading')}
               />
             )}
+            {view.name === 'clips' && <ClipsLibrary query={clipSearch} onQueryChange={setClipSearch}
+              onEdit={async (sermon, clip, clipIndex) => {
+                const current = await api.getClips(sermon.name)
+                const selected = current.clips[clipIndex]
+                if (!selected || selected.id !== clip.id) throw new Error('Clip list changed. Refresh the library and try again.')
+                const opened = await navigate({ name: 'trim', sermon, clip: selected, clipIndex,
+                  clipCount: current.clips.length })
+                if (!opened) throw new Error('Could not open the clip editor.')
+            }} />}
             {view.name === 'detail' && (
               <SermonDetail
                 key={view.sermon.name}

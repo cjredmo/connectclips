@@ -5,15 +5,13 @@ Sits beside ``clips.json`` and friends at
 regeneration (volunteer rerun of Claude clip selection) and gets cleaned up
 by the existing ``delete_sermon`` flow when the work dir is removed.
 
-Currently holds the program YouTube URL only -- the full uploaded sermon that
-each clip deep-links back to so a viewer can "watch from this moment on."
-Designed to grow more per-sermon fields later (recording date, preacher
-name, etc.) by extending ``FIELDS``.
+Holds the program YouTube URL and an optional sermon date.
 """
 from __future__ import annotations
 
 import json
 import re
+import datetime as dt
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -23,6 +21,7 @@ from app.config import settings
 
 FIELDS: tuple[str, ...] = (
     "program_video_url",
+    "sermon_date",
 )
 
 
@@ -44,13 +43,19 @@ def load(source_name: str) -> dict[str, str]:
 
 
 def save(source_name: str, values: dict[str, Any]) -> dict[str, str]:
-    """Upsert. Drops keys not in FIELDS and empty / None values. Returns the
+    """Upsert supplied fields. Drops unknown keys and empty / None values. Returns the
     cleaned dict that was saved (or empty if the file was deleted)."""
-    cleaned = {
-        k: str(values[k]).strip()
-        for k in FIELDS
-        if k in values and values[k] is not None and str(values[k]).strip() != ""
-    }
+    cleaned = load(source_name)
+    for key in FIELDS:
+        if key not in values:
+            continue
+        value = str(values[key]).strip() if values[key] is not None else ""
+        if value:
+            cleaned[key] = value
+        else:
+            cleaned.pop(key, None)
+    if "sermon_date" in cleaned:
+        dt.date.fromisoformat(cleaned["sermon_date"])
     p = _path(source_name)
     if cleaned:
         p.parent.mkdir(parents=True, exist_ok=True)

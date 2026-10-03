@@ -208,16 +208,14 @@ export const api = {
       { method: 'PUT', body: JSON.stringify(body) },
     ),
 
-  // Per-sermon metadata -- currently just the full-sermon YouTube URL that
-  // each clip's "watch from this moment" deep link points at. GET is open;
-  // PUT is admin-only. Backend validates that the URL parses to a YouTube
-  // video ID and returns it as program_video_id for the frontend to use.
+  // Per-sermon metadata: the full-sermon YouTube URL and optional sermon date.
+  // GET is open; PUT is admin-only. The backend derives program_video_id.
   getSermonMeta: (name: string) =>
-    jsonFetch<{ program_video_url: string | null; program_video_id: string | null }>(
+    jsonFetch<{ program_video_url: string | null; program_video_id: string | null; sermon_date: string | null }>(
       `/sermons/${encodeURIComponent(name)}/meta`,
     ),
-  saveSermonMeta: (name: string, body: { program_video_url: string | null }) =>
-    jsonFetch<{ program_video_url: string | null; program_video_id: string | null }>(
+  saveSermonMeta: (name: string, body: { program_video_url?: string | null; sermon_date?: string | null }) =>
+    jsonFetch<{ program_video_url: string | null; program_video_id: string | null; sermon_date: string | null }>(
       `/sermons/${encodeURIComponent(name)}/meta`,
       { method: 'PUT', body: JSON.stringify(body) },
     ),
@@ -269,4 +267,6 @@ export const fileUrl = {
   clip: (name: string) => `/files/clips/${encodeURIComponent(name)}`,
   identityThumb: (source: string, identityId: number) =>
     `/api/sermons/${encodeURIComponent(source)}/identities/${identityId}/thumb.png`,
+  clipThumb: (source: string, index: number, id: string, start: number, end: number) =>
+    `/api/sermons/${encodeURIComponent(source)}/clips/${index}/thumbnail.jpg?v=${encodeURIComponent(`${id}:${start}:${end}`)}`,
 }

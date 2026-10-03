@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.identity import get_user
 from app.routers.auth import require_admin
-from app.services import captions, clip_import, clip_metadata, clip_overrides, clip_selection, ingest, jobs, manual_clips, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
+from app.services import captions, clip_import, clip_metadata, clip_overrides, clip_selection, clip_thumbnails, ingest, jobs, manual_clips, reframe, sermon_meta, transcript_alignment, transcript_edits, transcript_repairs
 from app.services.transcribe import transcript_path_for
 
 
@@ -58,6 +60,7 @@ def list_sermons() -> list[dict]:
                 "name": p.name,
                 "size_bytes": stat.st_size,
                 "modified_at": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
+                "sermon_date": sermon_meta.load(p.name).get("sermon_date"),
                 "transcribed": transcript_path_for(p.name).exists(),
                 "clips_selected": clips_path.exists(),
                 "n_clips": n_clips,
@@ -294,6 +297,33 @@ def get_clips(name: str) -> dict:
     return data
 
 
+@router.get("/{name}/clips/{clip_index}/thumbnail.jpg")
+def get_clip_thumbnail(name: str, clip_index: int):
+    """Return one cached frame from the effective clip range, when available."""
+    from fastapi.responses import FileResponse
+    if Path(name).name != name or clip_index < 0:
+        raise HTTPException(status_code=400, detail="invalid clip")
+    source = settings.data_sources_dir / name
+    if not source.is_file() or source.suffix.lower() not in _VIDEO_EXTS:
+        raise HTTPException(status_code=404, detail="video source unavailable")
+    try:
+        collection = json.loads(clip_selection.clips_path_for(name).read_text())
+        clip = collection["clips"][clip_index].copy()
+        clip_metadata.normalize_for_display(clip, name, collection.get("clips_version"), clip_index)
+        override = clip_overrides.load_overrides(name).get(str(clip_index), {})
+        start = float(override.get("start", clip["start"]))
+        end = float(override.get("end", clip["end"]))
+        if not (0 <= start < end):
+            raise ValueError("invalid range")
+    except (OSError, ValueError, IndexError, KeyError, TypeError, AttributeError):
+        raise HTTPException(status_code=404, detail="clip unavailable") from None
+    try:
+        path = clip_thumbnails.thumbnail(source, clip_index, str(clip["id"]), start, end)
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.TimeoutExpired):
+        raise HTTPException(status_code=404, detail="thumbnail unavailable") from None
+    return FileResponse(path, media_type="image/jpeg")
+
+
 class ManualClipIn(BaseModel):
     title: str
     start: float
@@ -422,6 +452,7 @@ class SermonMetaIn(BaseModel):
     A field set to ``null`` or empty string means "clear this field".
     """
     program_video_url: str | None = None
+    sermon_date: str | None = None
 
 
 def _meta_response(name: str) -> dict:
@@ -433,6 +464,7 @@ def _meta_response(name: str) -> dict:
     return {
         "program_video_url": url,
         "program_video_id": sermon_meta.extract_youtube_id(url),
+        "sermon_date": data.get("sermon_date"),
     }
 
 
@@ -457,7 +489,7 @@ def put_sermon_meta(name: str, body: SermonMetaIn) -> dict:
     src = settings.data_sources_dir / name
     if not src.is_file():
         raise HTTPException(status_code=404, detail=f"sermon not found: {name}")
-    values = body.model_dump()
+    values = body.model_dump(exclude_unset=True)
     url = values.get("program_video_url")
     if url is not None and str(url).strip() != "":
         if sermon_meta.extract_youtube_id(url) is None:
@@ -466,6 +498,14 @@ def put_sermon_meta(name: str, body: SermonMetaIn) -> dict:
                 detail="program_video_url must be a YouTube link "
                        "(youtu.be/<id> or youtube.com/watch?v=<id>).",
             )
+    date = values.get("sermon_date")
+    if date is not None and date != "":
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            raise HTTPException(status_code=400, detail="sermon_date must be YYYY-MM-DD")
+        try:
+            dt.date.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="invalid sermon_date") from None
     sermon_meta.save(name, values)
     return _meta_response(name)
 

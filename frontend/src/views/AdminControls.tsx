@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { api } from '../api'
 
 type Props = {
@@ -16,12 +17,12 @@ export function AdminControls({ admin, identityAdmin, onChange }: Props) {
   if (admin) {
     return (
       <div className="admin-controls">
-        <span className="badge admin">ADMIN MODE</span>
+        <span className="badge admin" title="Admin mode"><span className="app-admin-icon" aria-hidden="true">⚙</span><span className="app-admin-label">Admin mode</span></span>
         {/* Only show Exit when admin came from the password (it can be revoked).
             Identity-based admin can't be "exited" without leaving the tailnet. */}
         {!identityAdmin && (
           <button
-            className="secondary"
+            className="secondary app-admin-exit"
             onClick={async () => {
               setBusy(true)
               try {
@@ -62,14 +63,14 @@ export function AdminControls({ admin, identityAdmin, onChange }: Props) {
 
   if (!showPrompt) {
     return (
-      <button className="secondary" onClick={() => setShowPrompt(true)}>
-        Enter admin mode
+      <button className="secondary app-admin-entry" onClick={() => setShowPrompt(true)} title="Enter admin mode">
+        <span className="app-admin-icon" aria-hidden="true">⚙</span><span className="app-admin-label">Enter admin mode</span>
       </button>
     )
   }
 
-  return (
-    <form className="admin-prompt" onSubmit={onSubmit}>
+  return createPortal(
+    <form className="admin-prompt app-admin-popover" onSubmit={onSubmit}>
       <input
         type="password"
         autoFocus
@@ -92,6 +93,6 @@ export function AdminControls({ admin, identityAdmin, onChange }: Props) {
         Cancel
       </button>
       {error && <span className="error-inline">{error}</span>}
-    </form>
+    </form>, document.body,
   )
 }
